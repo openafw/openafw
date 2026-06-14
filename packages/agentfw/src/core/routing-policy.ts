@@ -28,9 +28,10 @@ export type ChainMember = {
 export type RoutingTarget =
   | { kind: 'passthrough' }
   | { kind: 'chain'; members: ChainMember[] }
-  /** Reference to a reusable combination model (model-registry `combos`). The
-   *  combo is the single source of truth for its members + capabilities; a
-   *  composite-target route's own `capabilities` are ignored at resolve time. */
+  /** Reference to a reusable combination model (model-registry `combos`) — a
+   *  fusion panel + judge + synthesizer. The combo is the single source of
+   *  truth for its panel; a composite-target route's own `capabilities` are
+   *  ignored at resolve time. */
   | { kind: 'composite'; comboId: string }
 
 /** A capability the routed model can't natively provide (vision input,

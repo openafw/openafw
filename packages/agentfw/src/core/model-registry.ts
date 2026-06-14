@@ -10,11 +10,12 @@ import {
   type CapabilityFulfillment,
   type CapabilityId,
   type ChainMember,
+  type SwitchRule,
   normalizeCapabilities,
   normalizeMember,
 } from './routing-policy.ts'
 
-export const MODEL_REGISTRY_VERSION = 2 as const
+export const MODEL_REGISTRY_VERSION = 3 as const
 
 /** The three request/response wire formats agentfw can translate between. */
 export type ModelApi = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
@@ -77,18 +78,64 @@ export type ModelEntry = {
   origin: 'seeded' | 'manual'
 }
 
-/** A reusable combination model: an ordered failover chain of models plus the
- *  capabilities (vision companion, web_search tool provider) agentfw fulfills
- *  on its behalf. Routes target a combo by id (`{kind:'composite', comboId}`);
- *  the combo — not the route — owns its members + capabilities. Reinstates the
- *  old routing-v2 "strategy" concept as a first-class, registry-owned model. */
+/** A model endpoint reference inside a fusion combo — the judge and the
+ *  synthesizer. `providerId` disambiguates when the id exists under more than
+ *  one provider. */
+export type FusionEndpoint = {
+  modelId: string
+  providerId?: string
+}
+
+/** One panel member of a fusion combination model — a model that answers the
+ *  prompt in parallel with the rest of the panel, with its own per-member
+ *  failover.
+ *
+ *  - `switchOn`: when to fail this member over to its `fallback` — a daily/monthly
+ *    token or USD cap, and/or on upstream error (e.g. a provider's 5-hour rate
+ *    limit). Empty/absent → no failover.
+ *  - `fallback`: the backup model used when a `switchOn` rule fires. Resolves to
+ *    a 2-member chain `[primary{switchOn}, fallback]` per panel slot.
+ *
+ *  Vision (the text↔multimodal bridge) and web_search are configured once at the
+ *  combo level (see CombinationModel), not per member — one designated companion
+ *  serves every text-only panel member. */
+export type FusionMember = {
+  modelId: string
+  providerId?: string
+  switchOn?: SwitchRule[]
+  fallback?: FusionEndpoint
+}
+
+/** A reusable combination model — agentfw's local take on OpenRouter Fusion. A
+ *  panel of models answers the prompt in parallel, a judge distils their answers
+ *  into a structured analysis (consensus / contradictions / unique insights /
+ *  blind spots), and a synthesizer writes the single best final answer grounded
+ *  in it. Routes target a combo by id (`{kind:'composite', comboId}`); the combo
+ *  — not the route — is the source of truth for its panel.
+ *
+ *  - `vision`: ONE multimodal companion for the whole fusion. When the prompt
+ *    carries images, agentfw pre-describes them via this model so any text-only
+ *    panel member can still take part. Omit it when the panel is already
+ *    multimodal. (agentfw's edge over OpenRouter Fusion, which drops images for
+ *    text-only panel members.)
+ *  - `webSearch`: run web_search locally for the panel (anthropic client →
+ *    non-anthropic upstream), pinned to a tool provider.
+ *  - `judge` defaults to the synthesizer; `synthesizer` defaults to the first
+ *    panel member — so a minimal combo is just a panel. */
 export type CombinationModel = {
   id: string
   label: string
-  members: ChainMember[]
-  capabilities?: Partial<Record<CapabilityId, CapabilityFulfillment>>
+  /** 1–MAX_PANEL members, run in parallel. */
+  panel: FusionMember[]
+  vision?: FusionEndpoint
+  webSearch?: { providerId?: string }
+  judge?: FusionEndpoint
+  synthesizer?: FusionEndpoint
   origin: 'manual'
 }
+
+/** OpenRouter Fusion caps its panel at 8 models; mirror that. */
+export const MAX_FUSION_PANEL = 8
 
 export type ModelRegistry = {
   version: typeof MODEL_REGISTRY_VERSION
@@ -229,34 +276,117 @@ function normalizeModel(raw: unknown): ModelEntry | undefined {
   }
 }
 
-/** A combination model — members + capabilities reuse the routing-policy
- *  normalizers so a combo and a per-route chain validate identically. Dropped
- *  when it has no id or no resolvable members. */
+function normalizeFusionEndpoint(raw: unknown): FusionEndpoint | undefined {
+  if (!isObj(raw)) return undefined
+  if (typeof raw.modelId !== 'string' || raw.modelId === '') return undefined
+  return {
+    modelId: raw.modelId,
+    ...(typeof raw.providerId === 'string' && raw.providerId !== ''
+      ? { providerId: raw.providerId }
+      : {}),
+  }
+}
+
+function normalizeWebSearch(raw: unknown): { providerId?: string } | undefined {
+  if (!isObj(raw)) return undefined
+  return typeof raw.providerId === 'string' && raw.providerId !== ''
+    ? { providerId: raw.providerId }
+    : {}
+}
+
+/** A fusion panel member: the primary model, its per-member failover rules
+ *  (`switchOn` — token/USD caps + error), and the `fallback` model they switch
+ *  to. `normalizeMember` parses the {modelId, providerId, switchOn} part. */
+function normalizeFusionMember(raw: unknown): FusionMember | undefined {
+  const base = normalizeMember(raw)
+  if (!base) return undefined
+  const fallback = isObj(raw) ? normalizeFusionEndpoint(raw.fallback) : undefined
+  return {
+    modelId: base.modelId,
+    ...(base.providerId ? { providerId: base.providerId } : {}),
+    ...(base.switchOn ? { switchOn: base.switchOn } : {}),
+    ...(fallback ? { fallback } : {}),
+  }
+}
+
+/** Lift a legacy failover-combo's combo-level vision/web_search capabilities to
+ *  the fusion's combo-level vision/web_search, so they survive the move from
+ *  failover chains to fusion. */
+function legacyCaps(rawCaps: unknown): {
+  vision?: FusionEndpoint
+  webSearch?: { providerId?: string }
+} {
+  const caps = normalizeCapabilities(rawCaps)
+  const vision =
+    caps?.vision?.via === 'companion'
+      ? {
+          modelId: caps.vision.modelId,
+          ...(caps.vision.providerId ? { providerId: caps.vision.providerId } : {}),
+        }
+      : undefined
+  const webSearch =
+    caps?.web_search?.via === 'local'
+      ? caps.web_search.providerId
+        ? { providerId: caps.web_search.providerId }
+        : {}
+      : undefined
+  return { ...(vision ? { vision } : {}), ...(webSearch ? { webSearch } : {}) }
+}
+
+/** A fusion combination model. Accepts the current `panel` shape and migrates
+ *  the legacy failover-combo shape (`members` + `capabilities`) forward: each
+ *  member becomes a panel member, and the old combo-level vision/web_search
+ *  capabilities become the combo-level `vision`/`webSearch`. Dropped when it has
+ *  no id or no resolvable panel member. */
 function normalizeCombo(raw: unknown): CombinationModel | undefined {
   if (!isObj(raw)) return undefined
   const { id, label } = raw
   if (typeof id !== 'string' || id === '') return undefined
-  const members = Array.isArray(raw.members)
-    ? raw.members.map(normalizeMember).filter((m): m is ChainMember => m != null)
-    : []
-  if (members.length === 0) return undefined
-  const capabilities = normalizeCapabilities(raw.capabilities)
+
+  let panel: FusionMember[]
+  let migrated: { vision?: FusionEndpoint; webSearch?: { providerId?: string } } = {}
+  if (Array.isArray(raw.panel)) {
+    panel = raw.panel.map(normalizeFusionMember).filter((m): m is FusionMember => m != null)
+  } else if (Array.isArray(raw.members)) {
+    migrated = legacyCaps(raw.capabilities)
+    panel = raw.members
+      .map(normalizeMember)
+      .filter((m): m is ChainMember => m != null)
+      .map((m) => ({
+        modelId: m.modelId,
+        ...(m.providerId ? { providerId: m.providerId } : {}),
+        ...(m.switchOn ? { switchOn: m.switchOn } : {}),
+      }))
+  } else {
+    panel = []
+  }
+  if (panel.length === 0) return undefined
+
+  const vision = normalizeFusionEndpoint(raw.vision) ?? migrated.vision
+  const webSearch = normalizeWebSearch(raw.webSearch) ?? migrated.webSearch
+  const judge = normalizeFusionEndpoint(raw.judge)
+  const synthesizer = normalizeFusionEndpoint(raw.synthesizer)
   return {
     id,
     label: typeof label === 'string' && label !== '' ? label : id,
-    members,
-    ...(capabilities ? { capabilities } : {}),
+    panel: panel.slice(0, MAX_FUSION_PANEL),
+    ...(vision ? { vision } : {}),
+    ...(webSearch ? { webSearch } : {}),
+    ...(judge ? { judge } : {}),
+    ...(synthesizer ? { synthesizer } : {}),
     origin: 'manual',
   }
 }
 
 /** Coerce parsed JSON into a valid registry — malformed entries are dropped,
  *  a hand-edited file with one bad entry never wipes the rest. v1 (no `combos`)
- *  is accepted and migrated forward trivially. Throws only on an unsupported
- *  version, so a future format is never silently downgraded. */
+ *  and v2 (failover-style combos) are accepted and migrated forward by
+ *  `normalizeCombo` — v2 combos' `members`/`capabilities` become a fusion
+ *  `panel`. Throws only on an unsupported version, so a future format is never
+ *  silently downgraded. */
 export function normalizeModelRegistry(raw: unknown): ModelRegistry {
   if (!isObj(raw)) return { ...EMPTY_REGISTRY }
-  if (raw.version !== 1 && raw.version !== MODEL_REGISTRY_VERSION) {
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== MODEL_REGISTRY_VERSION) {
     throw new Error(
       `models.json version ${String(raw.version)} not supported (expected ${MODEL_REGISTRY_VERSION})`,
     )

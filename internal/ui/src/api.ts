@@ -206,12 +206,22 @@ export async function fetchModelList(input: {
   return body.models ?? []
 }
 
-// combination models (registry `combos`)
+// model fusion (registry `combos`): a parallel panel + judge + synthesizer,
+// with per-member failover (token cap / error → fallback model) and a
+// fusion-level vision companion + web_search.
 export async function saveCombo(combo: {
   id?: string
   label: string
-  members: { modelId: string; providerId?: string; switchOn?: { kind: string }[] }[]
-  capabilities?: Record<string, unknown>
+  panel: {
+    modelId: string
+    providerId?: string
+    switchOn?: { kind: string; tokenLimit?: number; usdLimit?: number; period?: string }[]
+    fallback?: { modelId: string; providerId?: string }
+  }[]
+  vision?: { modelId: string; providerId?: string }
+  webSearch?: { providerId?: string }
+  judge?: { modelId: string; providerId?: string }
+  synthesizer?: { modelId: string; providerId?: string }
 }): Promise<void> {
   await send('POST', '/api/routing/combo', combo)
 }

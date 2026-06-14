@@ -26,10 +26,13 @@ import { beginRequest, endRequest, trackStream } from '../proxy/inflight.ts'
 import { getRoutingPolicy } from '../routing/load.ts'
 import {
   type IRResponse,
+  parseRequestToIR,
   parseStreamToIR,
+  serializeRequestFromIR,
   serializeResponseFromIR,
   translateSseStream,
 } from '../translate/index.ts'
+import { type IRMessage, type IRRequest, mergeConsecutive } from '../translate/ir.ts'
 import { spendInPeriod, tokensInPeriod } from './budget.ts'
 import { captureChain, captureSingle, type RoutedAttempt } from './capture.ts'
 import {
@@ -52,7 +55,13 @@ import {
 } from './web-search-emulation.ts'
 import { preDescribeImages, requestHasImageBlock } from './image-predescribe.ts'
 import { findAnyVisionModelRef } from './resolve.ts'
-import { type ResolvedMember, type ResolvedRoute, resolveRoute } from './resolve.ts'
+import {
+  type ModelRef,
+  type ResolvedMember,
+  type ResolvedPanelMember,
+  type ResolvedRoute,
+  resolveRoute,
+} from './resolve.ts'
 import { resolveSubagentDowngrade } from './subagent.ts'
 import { synthesizeSse } from './synth-sse.ts'
 
@@ -111,6 +120,10 @@ export async function tryOrchestrate(ctx: WireContext): Promise<Response | undef
   // body is not reroutable and falls through to passthrough.
   const req = parseJsonObject(ctx.reqBody)
   if (!req) return undefined
+
+  if (resolved.kind === 'fusion') {
+    return runFusion(ctx, resolved, req)
+  }
 
   if (resolved.kind === 'chain') {
     return runChain(ctx, resolved, req)
@@ -677,6 +690,364 @@ function buildChainResponse(
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+// ── fusion path: parallel panel → judge → synthesis ──────────────
+//
+// agentfw's local take on OpenRouter Fusion. The combo's panel answers the
+// prompt in parallel — each slot is its own failover chain (a token/USD cap or
+// an upstream error switches the slot to its fallback model). One combo-level
+// vision companion bridges images for any text-only panel member (the part
+// OpenRouter doesn't do); a judge distils the answers into a structured
+// analysis; a synthesizer writes the final answer grounded in it. The client
+// sees one model call; the whole fan-out is captured as a parent ($0, model =
+// combo id) plus one child per upstream call (vision / panel / judge /
+// synthesis), so cost rolls up as the sum.
+//
+// Inherent to fusion: nothing streams to the client until the panel and judge
+// have finished, so a `stream:true` client gets a synthesized SSE of the final
+// answer (the same synth-SSE the chain path uses). Latency = slowest panel
+// member + judge + synthesis; cost = the sum of every call.
+
+const FUSION_JUDGE_MAX_TOKENS = 2048
+
+const FUSION_JUDGE_SYSTEM = [
+  'You are the judge in a multi-model deliberation.',
+  'You will be given the original request and several independent model answers to it.',
+  'Compare the answers and respond with ONLY a JSON object (no prose, no markdown fence)',
+  'of the shape: {"consensus":[string],"contradictions":[{"topic":string,"stances":[string]}],',
+  '"partial_coverage":[{"models":[string],"point":string}],',
+  '"unique_insights":[{"model":string,"insight":string}],"blind_spots":[string]}.',
+  'Treat points all or most models agree on as higher-confidence consensus, surface genuine',
+  'contradictions, preserve unique insights from individual models, and note blind spots',
+  'no answer addressed.',
+].join(' ')
+
+const FUSION_SYNTH_GUIDANCE = [
+  'Several models independently answered your task; their answers',
+  '(and, where available, a judge’s structured analysis of them) follow.',
+  'Synthesize the single best, complete final answer, leaning on the consensus,',
+  'incorporating the strongest unique insights, and resolving any contradictions with',
+  'your own judgement. Do not mention this deliberation, the panel, or the judge —',
+  'answer the user directly.',
+].join(' ')
+
+type PanelAnswer = { model: string; text: string }
+
+type PanelOutcome = {
+  attempts: RoutedAttempt[]
+  answer?: PanelAnswer
+  winner?: { ir: IRResponse; status: number }
+}
+
+/** Concatenate an IR response's text blocks. */
+function textOfIR(ir: IRResponse): string {
+  return ir.blocks
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim()
+}
+
+/** The last user turn's text, used to ground the judge prompt. */
+function lastUserText(clientApi: ModelApi, req: Record<string, unknown>): string {
+  try {
+    const ir = parseRequestToIR(clientApi, req)
+    for (let i = ir.messages.length - 1; i >= 0; i--) {
+      const m = ir.messages[i]
+      if (m?.role !== 'user') continue
+      const t = m.content
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+        .trim()
+      if (t) return t
+    }
+  } catch {
+    // unparseable — judge still works from the panel answers alone
+  }
+  return ''
+}
+
+/** Render the panel answers as a labelled block for the judge / synthesizer. */
+function renderPanelAnswers(answers: PanelAnswer[]): string {
+  return answers.map((a, i) => `[Model ${i + 1}: ${a.model}]\n${a.text}`).join('\n\n')
+}
+
+/** Run one panel slot — its own failover chain. The primary's `switchOn` rules
+ *  (token/USD cap, error) hand off to the fallback. A text-only member gets the
+ *  pre-described request (when the fusion's vision companion produced one);
+ *  multimodal members keep the raw images. Per-member web_search emulation uses
+ *  the fusion's pinned provider. Never throws — a fully-failed slot contributes
+ *  no answer. */
+async function runPanelMember(
+  pm: ResolvedPanelMember,
+  clientApi: ModelApi,
+  req: Record<string, unknown>,
+  describedReq: Record<string, unknown> | undefined,
+  webSearchProviderId: string | undefined,
+  execCtx: { agent: AgentId; reqHeaders: Headers },
+): Promise<PanelOutcome> {
+  const { members } = pm
+  const attempts: RoutedAttempt[] = []
+  let answer: PanelAnswer | undefined
+  let winner: { ir: IRResponse; status: number } | undefined
+
+  for (let i = 0; i < members.length; i++) {
+    const member = members[i]!
+    const isLast = i === members.length - 1
+
+    // Quota pre-checks on the member we might switch FROM — skip it (fail over to
+    // the fallback) when it's over its daily/monthly USD or token cap.
+    if (!isLast) {
+      const budgetRule = member.switchOn.find(
+        (r): r is Extract<SwitchRule, { kind: 'budget' }> => r.kind === 'budget',
+      )
+      if (budgetRule && (await spendInPeriod(member.model.id, budgetRule.period)) >= budgetRule.usdLimit) {
+        continue
+      }
+      const tokenRule = member.switchOn.find(
+        (r): r is Extract<SwitchRule, { kind: 'tokens' }> => r.kind === 'tokens',
+      )
+      if (tokenRule && (await tokensInPeriod(member.model.id, tokenRule.period)) >= tokenRule.tokenLimit) {
+        continue
+      }
+    }
+
+    const memberTextOnly = !(member.model.input ?? []).includes('image')
+    const memberReq = memberTextOnly && describedReq ? describedReq : req
+
+    const needsSearch =
+      webSearchProviderId != null &&
+      clientApi === 'anthropic-messages' &&
+      !isAnthropicNative(member.provider) &&
+      hasAnthropicWebSearchTool(memberReq)
+
+    let ok: boolean
+    if (needsSearch) {
+      const rewritten = rewriteAnthropicWebSearchTool(memberReq)
+      const outcome = await runWebSearchEmulationLoop({
+        member,
+        clientApi,
+        clientRequest: rewritten,
+        ctx: execCtx,
+        providerIdOverride: webSearchProviderId,
+      })
+      for (const a of outcome.attempts) attempts.push({ ...a, role: 'panel' })
+      const last = outcome.attempts[outcome.attempts.length - 1]
+      ok = outcome.ok && !!last?.result.ok
+      if (ok && last?.result.ok) {
+        winner = { ir: last.result.ir, status: outcome.status }
+        answer = { model: member.model.id, text: textOfIR(last.result.ir) }
+      }
+    } else {
+      const result = await execAttempt(member, clientApi, memberReq, execCtx)
+      attempts.push({ member, result, role: 'panel', step: 0, request: { api: clientApi, body: memberReq } })
+      ok = result.ok
+      if (result.ok) {
+        winner = { ir: result.ir, status: result.status }
+        answer = { model: member.model.id, text: textOfIR(result.ir) }
+      }
+    }
+
+    if (ok) break
+    // Advance to the fallback only on an explicit error switch rule.
+    if (isLast || !member.switchOn.some((r) => r.kind === 'error')) break
+  }
+
+  return { attempts, ...(answer ? { answer } : {}), ...(winner ? { winner } : {}) }
+}
+
+/** Run the judge: distil the panel answers into a structured analysis. The
+ *  attempt is captured regardless; on failure the analysis is absent and the
+ *  synthesizer works from the raw answers (matches OpenRouter's judge-failure
+ *  behaviour). */
+async function runJudge(
+  judge: ModelRef,
+  clientApi: ModelApi,
+  req: Record<string, unknown>,
+  answers: PanelAnswer[],
+  execCtx: { agent: AgentId; reqHeaders: Headers },
+): Promise<{ attempt: RoutedAttempt; analysis?: string }> {
+  const member: ResolvedMember = {
+    model: judge.model,
+    provider: judge.provider,
+    api: judge.api,
+    switchOn: [],
+  }
+  const userText = lastUserText(clientApi, req)
+  const judgeIR: IRRequest = {
+    model: judge.model.id,
+    system: FUSION_JUDGE_SYSTEM,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Original request:\n${userText}\n\nPanel answers:\n${renderPanelAnswers(answers)}`,
+          },
+        ],
+      },
+    ],
+    maxTokens: FUSION_JUDGE_MAX_TOKENS,
+    stream: false,
+  }
+  const body = serializeRequestFromIR(judge.api, judgeIR) as Record<string, unknown>
+  const result = await execAttempt(member, judge.api, body, execCtx)
+  const attempt: RoutedAttempt = {
+    member,
+    result,
+    role: 'judge',
+    step: 0,
+    request: { api: judge.api, body },
+  }
+  return result.ok ? { attempt, analysis: textOfIR(result.ir) } : { attempt }
+}
+
+/** Run the synthesizer: the agent's original request plus a final user turn
+ *  carrying the panel answers and the judge analysis, instructing the model to
+ *  write the grounded final answer. Falls back to the raw request if the IR
+ *  round-trip fails. */
+async function runSynthesis(
+  synth: ModelRef,
+  clientApi: ModelApi,
+  req: Record<string, unknown>,
+  answers: PanelAnswer[],
+  analysis: string | undefined,
+  execCtx: { agent: AgentId; reqHeaders: Headers },
+): Promise<{ attempt: RoutedAttempt; winner?: { ir: IRResponse; status: number } }> {
+  const member: ResolvedMember = {
+    model: synth.model,
+    provider: synth.provider,
+    api: synth.api,
+    switchOn: [],
+  }
+  let body: Record<string, unknown>
+  try {
+    const ir = parseRequestToIR(clientApi, req)
+    const deliberation =
+      `${FUSION_SYNTH_GUIDANCE}\n\nPanel answers:\n${renderPanelAnswers(answers)}` +
+      (analysis ? `\n\nJudge analysis:\n${analysis}` : '')
+    const messages: IRMessage[] = mergeConsecutive([
+      ...ir.messages,
+      { role: 'user', content: [{ type: 'text', text: deliberation }] },
+    ])
+    const synthIR: IRRequest = { ...ir, model: synth.model.id, messages, stream: false }
+    body = serializeRequestFromIR(clientApi, synthIR) as Record<string, unknown>
+  } catch {
+    body = req
+  }
+  const result = await execAttempt(member, clientApi, body, execCtx)
+  const attempt: RoutedAttempt = {
+    member,
+    result,
+    role: 'synthesis',
+    step: 0,
+    request: { api: clientApi, body },
+  }
+  return result.ok ? { attempt, winner: { ir: result.ir, status: result.status } } : { attempt }
+}
+
+/** Drive a fusion combo: fan out the panel, judge their answers, synthesize the
+ *  final one. Buffered throughout (the synthesizer's answer is synth-SSE'd when
+ *  the client asked to stream). Capture reuses the chain machinery — parent +
+ *  one child per upstream call. */
+async function runFusion(
+  ctx: WireContext,
+  resolved: Extract<ResolvedRoute, { kind: 'fusion' }>,
+  req: Record<string, unknown>,
+): Promise<Response> {
+  const orchStartWall = Date.now()
+  const orchT0 = performance.now()
+  const wantsStream = req.stream === true
+  const { clientApi, panel, judge, synthesizer } = resolved
+  const execCtx = { agent: ctx.agent, reqHeaders: ctx.reqHeaders }
+
+  beginRequest()
+  try {
+    const attempts: RoutedAttempt[] = []
+
+    // Vision bridge — described once for the whole fusion (the combo's single
+    // companion), reused by every text-only panel member. Multimodal members
+    // keep the raw images. Skipped when no panel member is text-only.
+    let describedReq: Record<string, unknown> | undefined
+    if (resolved.vision && requestHasImageBlock(clientApi, req)) {
+      const anyTextOnly = panel.some((slot) =>
+        slot.members.some((m) => !(m.model.input ?? []).includes('image')),
+      )
+      if (anyTextOnly) {
+        const visionMember: ResolvedMember = {
+          model: resolved.vision.model,
+          provider: resolved.vision.provider,
+          api: resolved.vision.api,
+          switchOn: [],
+        }
+        const pre = await preDescribeImages(clientApi, req, visionMember, execCtx)
+        for (const a of pre.attempts) attempts.push(a)
+        describedReq = pre.request
+      }
+    }
+
+    // Panel — every slot answers in parallel (each with its own failover).
+    const outcomes = await Promise.all(
+      panel.map((pm) =>
+        runPanelMember(pm, clientApi, req, describedReq, resolved.webSearchProviderId, execCtx),
+      ),
+    )
+    for (const o of outcomes) for (const a of o.attempts) attempts.push(a)
+    const answers = outcomes
+      .map((o) => o.answer)
+      .filter((a): a is PanelAnswer => a != null && a.text !== '')
+
+    let winner: { ir: IRResponse; status: number } | undefined
+    if (answers.length === 0) {
+      logger.warn(`routing: ${ctx.routeKey} fusion — every panel member failed`)
+    } else {
+      // Judge — best-effort; a failure just drops the analysis.
+      const judged = await runJudge(judge, clientApi, req, answers, execCtx)
+      attempts.push(judged.attempt)
+      if (judged.analysis === undefined) {
+        logger.warn(`routing: ${ctx.routeKey} fusion judge failed, synthesizing from raw answers`)
+      }
+      // Synthesis — the final answer. Fall back to the best panel answer if it fails.
+      const synthed = await runSynthesis(
+        synthesizer,
+        clientApi,
+        req,
+        answers,
+        judged.analysis,
+        execCtx,
+      )
+      attempts.push(synthed.attempt)
+      winner = synthed.winner ?? outcomes.find((o) => o.winner)?.winner
+      logger.info(
+        `routed ${ctx.routeKey} → fusion:${resolved.configuredTarget.id} ` +
+          `[${answers.length}/${panel.length} panel, judge ${judged.analysis ? 'ok' : 'failed'}, ` +
+          `synth ${synthed.winner ? 'ok' : 'failed'}]`,
+      )
+    }
+
+    const renumbered = attempts.map((a, i) => ({ ...a, step: i }))
+    const response = buildChainResponse(clientApi, winner, renumbered, wantsStream)
+    await captureChain(
+      {
+        agent: ctx.agent,
+        decoder: ctx.decoder,
+        ...(ctx.instanceId ? { instanceId: ctx.instanceId } : {}),
+      },
+      clientApi,
+      req,
+      renumbered,
+      winner,
+      resolved.configuredTarget,
+      { ts: orchStartWall, durMs: performance.now() - orchT0 },
+      [],
+    )
+    return response
+  } finally {
+    endRequest()
+  }
 }
 
 // ── streaming path: single-model cross-protocol swap ──────────────

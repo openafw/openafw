@@ -5,7 +5,12 @@
 import process from 'node:process'
 import { Command } from 'commander'
 import { logger } from '../../core/logger.ts'
-import type { ModelApi, ModelEntry, ProviderEntry } from '../../core/model-registry.ts'
+import type {
+  CombinationModel,
+  ModelApi,
+  ModelEntry,
+  ProviderEntry,
+} from '../../core/model-registry.ts'
 import { DAEMON_BASE_URL } from '../../core/paths.ts'
 import type {
   AgentRouting,
@@ -25,6 +30,7 @@ const MODEL_APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-res
 type RegistryResponse = {
   providers: ProviderEntry[]
   models: ModelEntry[]
+  combos: CombinationModel[]
   secretRefs: string[]
 }
 type RoutingRoute = {
@@ -82,12 +88,31 @@ async function run(fn: () => Promise<void>): Promise<void> {
   }
 }
 
-function describeTarget(t: RoutingTarget): string {
+function describeTarget(t: RoutingTarget, combos?: CombinationModel[]): string {
   if (t.kind === 'chain') {
     if (t.members.length === 1) return `→ model ${t.members[0]!.modelId}`
     return `→ chain ${t.members.map((m) => m.modelId).join(' → ')}`
   }
+  if (t.kind === 'composite') {
+    const c = combos?.find((x) => x.id === t.comboId)
+    return `→ fusion ${c?.label ?? t.comboId}`
+  }
   return 'passthrough'
+}
+
+// A fusion model's one-line shape for `route fusion list`: the parallel panel
+// (with per-member fallbacks), then the judge and synthesizer (each defaulting
+// when unset), plus the combo-level vision companion.
+function describeFusion(c: CombinationModel): string {
+  const panel = c.panel
+    .map((m) => (m.fallback ? `${m.modelId}→${m.fallback.modelId}` : m.modelId))
+    .join(' + ')
+  const judge = c.judge?.modelId ?? '(synthesizer)'
+  const synth = c.synthesizer?.modelId ?? c.panel[0]?.modelId ?? '—'
+  const extras: string[] = []
+  if (c.vision) extras.push(`vision ${c.vision.modelId}`)
+  if (c.webSearch) extras.push('web_search')
+  return `panel [${panel}] · judge ${judge} → synth ${synth}${extras.length ? ` · ${extras.join(' · ')}` : ''}`
 }
 
 // The vision companion, if any, rendered for `list`/`show`. A text-only
@@ -118,7 +143,10 @@ const listCmd = new Command('list')
   .description('List wire routes and their model routing.')
   .action(() =>
     run(async () => {
-      const { policy, routes } = await apiFetch<PolicyResponse>('GET', '/api/routing/policy')
+      const [{ policy, routes }, reg] = await Promise.all([
+        apiFetch<PolicyResponse>('GET', '/api/routing/policy'),
+        apiFetch<RegistryResponse>('GET', '/api/routing/registry'),
+      ])
       if (routes.length === 0) {
         logger.print(
           'No wire routes yet. Launch an agent (`agentfw claude`) or run `agentfw model add`.',
@@ -127,7 +155,7 @@ const listCmd = new Command('list')
       }
       for (const route of routes) {
         const routing = policy.agents[route.routeKey]
-        const target = routing ? describeTarget(routing.target) : 'passthrough'
+        const target = routing ? describeTarget(routing.target, reg.combos) : 'passthrough'
         const vision = describeVision(routing)
         logger.print(`  ${route.routeKey.padEnd(36)} ${target}${vision ? `   ${vision}` : ''}`)
       }
@@ -139,26 +167,35 @@ const showCmd = new Command('show')
   .argument('<routeKey>', 'route key, e.g. openclaw/anthropic')
   .action((routeKey: string) =>
     run(async () => {
-      const { policy, routes } = await apiFetch<PolicyResponse>('GET', '/api/routing/policy')
+      const [{ policy, routes }, reg] = await Promise.all([
+        apiFetch<PolicyResponse>('GET', '/api/routing/policy'),
+        apiFetch<RegistryResponse>('GET', '/api/routing/registry'),
+      ])
       const route = routes.find((r) => r.routeKey === routeKey)
       if (!route) return fail(`unknown route "${routeKey}"`)
       const routing = policy.agents[routeKey]
       logger.print(`Route:   ${route.routeKey}`)
       logger.print(`Decoder: ${route.decoder}`)
-      logger.print(`Target:  ${routing ? describeTarget(routing.target) : 'passthrough'}`)
+      logger.print(`Target:  ${routing ? describeTarget(routing.target, reg.combos) : 'passthrough'}`)
+      const target = routing?.target
+      if (target?.kind === 'composite') {
+        const c = reg.combos.find((x) => x.id === target.comboId)
+        if (c) logger.print(`Fusion:  ${describeFusion(c)}`)
+      }
       const vision = describeVision(routing)
       logger.print(`Vision:  ${vision ? vision.replace('vision→', 'companion ') : 'native (routed model sees images)'}`)
     }),
   )
 
-type SetOpts = { model?: string; chain?: string[]; passthrough?: boolean }
+type SetOpts = { model?: string; chain?: string[]; fusion?: string; passthrough?: boolean }
 
 const setCmd = new Command('set')
   .description(
-    'Route an <agent>/<sourceModel> (or the wildcard <agent>/*) to a model, a failover chain, or passthrough.\n' +
+    'Route an <agent>/<sourceModel> (or the wildcard <agent>/*) to a model, a failover chain, a fusion model, or passthrough.\n' +
       '  Examples:\n' +
       '    agentfw route set claude-code/* --model glm-4.6\n' +
       '    agentfw route set claude-code/* --chain glm-4.6 --chain deepseek-v4    # error-failover\n' +
+      '    agentfw route set claude-code/* --fusion frontier-panel               # a Model Fusion combo\n' +
       '    agentfw route set claude-code/claude-opus-4-7 --passthrough            # pin Opus back to Anthropic',
   )
   .argument('<routeKey>', 'route key, e.g. claude-code/* or claude-code/claude-sonnet-4-6')
@@ -169,6 +206,10 @@ const setCmd = new Command('set')
     collect,
     [] as string[],
   )
+  .option(
+    '--fusion <comboId>',
+    'route to a Model Fusion combo (parallel panel → judge → synthesize). Build one on the dashboard or list them with `agentfw route fusion list`.',
+  )
   .option('--passthrough', 'restore plain passthrough (the default)')
   .action((routeKey: string, opts: SetOpts) =>
     run(async () => {
@@ -176,18 +217,27 @@ const setCmd = new Command('set')
       const chosen = [
         opts.model,
         chainIds.length > 0 ? '_chain' : undefined,
+        opts.fusion,
         opts.passthrough,
       ].filter(Boolean)
       if (chosen.length !== 1) {
-        return fail('pass exactly one of --model, --chain, or --passthrough')
+        return fail('pass exactly one of --model, --chain, --fusion, or --passthrough')
       }
       const target: RoutingTarget = opts.model
         ? { kind: 'chain', members: [{ modelId: opts.model }] }
         : chainIds.length > 0
           ? { kind: 'chain', members: chainMembers(chainIds) }
-          : { kind: 'passthrough' }
+          : opts.fusion
+            ? { kind: 'composite', comboId: opts.fusion }
+            : { kind: 'passthrough' }
       await apiFetch('POST', '/api/routing/agent', { routeKey, target })
-      logger.print(`✓ ${routeKey} ${describeTarget(target)}`)
+      // describeTarget needs the combo label for a fusion target; fetch the
+      // registry only on that branch so the common cases stay one round trip.
+      const combos =
+        target.kind === 'composite'
+          ? (await apiFetch<RegistryResponse>('GET', '/api/routing/registry')).combos
+          : undefined
+      logger.print(`✓ ${routeKey} ${describeTarget(target, combos)}`)
     }),
   )
 
@@ -280,6 +330,34 @@ const visionCmd = new Command('vision')
       logger.print(`✓ ${routeKey} vision → companion ${ref}`)
     }),
   )
+
+// ── route fusion (Model Fusion combos) ────────────────────────────
+//
+// A fusion model runs a panel of models in parallel, a judge distils their
+// answers into a structured analysis, and a synthesizer writes the final
+// answer. Authoring a panel (per-member vision bridge, web_search) lives on the
+// dashboard's rich editor; the CLI lists them and assigns one with
+// `route set <key> --fusion <id>`.
+
+const fusionList = new Command('list')
+  .description('List configured Model Fusion combos (panel → judge → synthesize).')
+  .action(() =>
+    run(async () => {
+      const reg = await apiFetch<RegistryResponse>('GET', '/api/routing/registry')
+      if (!reg.combos || reg.combos.length === 0) {
+        logger.print('No fusion models yet. Build one on the dashboard (`agentfw ui` → Routing → Models).')
+        return
+      }
+      for (const c of reg.combos) {
+        logger.print(`  ${c.id.padEnd(24)} ${c.label}`)
+        logger.print(`  ${' '.repeat(24)} ${describeFusion(c)}`)
+      }
+    }),
+  )
+
+const fusionCmd = new Command('fusion')
+  .description('List Model Fusion combos (build them on the dashboard).')
+  .addCommand(fusionList)
 
 // ── route provider ────────────────────────────────────────────────
 
@@ -472,7 +550,7 @@ const subagentCmd = new Command('subagent')
 
 export const routeCommand = new Command('route')
   .description(
-    'Configure per-agent model routing, failover chains, vision companions, and subagent downgrade.',
+    'Configure per-agent model routing: single models, failover chains, Model Fusion, vision companions, and subagent downgrade.',
   )
   .addCommand(subagentCmd)
   .addCommand(listCmd)
@@ -480,6 +558,7 @@ export const routeCommand = new Command('route')
   .addCommand(setCmd)
   .addCommand(unsetCmd)
   .addCommand(visionCmd)
+  .addCommand(fusionCmd)
 
 // Mounted under `agentfw model` (see commands/model.ts) so there's one home
 // for "what models exist" separate from "where traffic goes".

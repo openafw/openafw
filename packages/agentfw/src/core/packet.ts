@@ -42,7 +42,17 @@ export type NormalizedBlock =
 /** How a captured model_call was produced by the routing orchestrator.
  *  Absent on a plain passthrough call. */
 export type Orchestration = {
-  role: 'parent' | 'primary' | 'failover' | 'budget-switch' | 'vision' | 'text-turn'
+  role:
+    | 'parent'
+    | 'primary'
+    | 'failover'
+    | 'budget-switch'
+    | 'vision'
+    | 'text-turn'
+    // Fusion fan-out: each panel member, the judge, and the final synthesizer.
+    | 'panel'
+    | 'judge'
+    | 'synthesis'
   /** The route's configured target — set on the parent of a fan-out.
    *  Legacy `'strategy'` / `'combo'` kinds stay readable so historically
    *  captured packets still parse. */

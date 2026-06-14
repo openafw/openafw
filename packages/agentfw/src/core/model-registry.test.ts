@@ -30,17 +30,62 @@ const model: ModelEntry = {
 
 describe('normalizeModelRegistry', () => {
   it('round-trips a valid registry', () => {
-    const reg = { version: 2, providers: [provider], models: [model], combos: [] }
+    const reg = { version: 3, providers: [provider], models: [model], combos: [] }
     expect(normalizeModelRegistry(reg)).toEqual(reg)
   })
 
-  it('migrates a v1 registry forward to v2 (adds combos)', () => {
+  it('migrates a v1 registry forward (adds combos)', () => {
     const out = normalizeModelRegistry({ version: 1, providers: [provider], models: [model] })
-    expect(out.version).toBe(2)
+    expect(out.version).toBe(3)
     expect(out.combos).toEqual([])
   })
 
-  it('normalizes combos (members reuse the routing normalizers; bad ones dropped)', () => {
+  it('normalizes a fusion combo (panel + per-member failover + combo-level vision/web_search)', () => {
+    const out = normalizeModelRegistry({
+      version: 3,
+      providers: [provider],
+      models: [model],
+      combos: [
+        {
+          id: 'c1',
+          label: 'panel',
+          panel: [
+            { modelId: 'gpt-5.5' },
+            {
+              modelId: 'coder-x',
+              switchOn: [{ kind: 'tokens', tokenLimit: 1_000_000, period: 'day' }, { kind: 'error' }],
+              fallback: { modelId: 'gpt-5.5' },
+            },
+          ],
+          vision: { modelId: 'vision-mini' },
+          webSearch: { providerId: 'ddg' },
+          judge: { modelId: 'judge-x' },
+          synthesizer: { modelId: 'gpt-5.5' },
+        },
+        { id: 'empty', label: 'no panel', panel: [] }, // dropped — no panel
+      ],
+    })
+    expect(out.combos).toHaveLength(1)
+    expect(out.combos[0]).toEqual({
+      id: 'c1',
+      label: 'panel',
+      panel: [
+        { modelId: 'gpt-5.5' },
+        {
+          modelId: 'coder-x',
+          switchOn: [{ kind: 'tokens', tokenLimit: 1_000_000, period: 'day' }, { kind: 'error' }],
+          fallback: { modelId: 'gpt-5.5' },
+        },
+      ],
+      vision: { modelId: 'vision-mini' },
+      webSearch: { providerId: 'ddg' },
+      judge: { modelId: 'judge-x' },
+      synthesizer: { modelId: 'gpt-5.5' },
+      origin: 'manual',
+    })
+  })
+
+  it('migrates a legacy failover combo to a fusion panel, lifting capabilities to the combo level', () => {
     const out = normalizeModelRegistry({
       version: 2,
       providers: [provider],
@@ -48,19 +93,27 @@ describe('normalizeModelRegistry', () => {
       combos: [
         {
           id: 'c1',
-          label: 'text + vision',
-          members: [{ modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] }],
-          capabilities: { vision: { via: 'companion', modelId: 'vision-mini' } },
+          label: 'legacy',
+          members: [
+            { modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] },
+            { modelId: 'claude-x' },
+          ],
+          capabilities: {
+            vision: { via: 'companion', modelId: 'vision-mini' },
+            web_search: { via: 'local', providerId: 'ddg' },
+          },
         },
-        { id: 'empty', label: 'no members', members: [] }, // dropped — no members
       ],
     })
-    expect(out.combos).toHaveLength(1)
     expect(out.combos[0]).toEqual({
       id: 'c1',
-      label: 'text + vision',
-      members: [{ modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] }],
-      capabilities: { vision: { via: 'companion', modelId: 'vision-mini' } },
+      label: 'legacy',
+      panel: [
+        { modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] },
+        { modelId: 'claude-x' },
+      ],
+      vision: { modelId: 'vision-mini' },
+      webSearch: { providerId: 'ddg' },
       origin: 'manual',
     })
   })
@@ -123,7 +176,7 @@ describe('normalizeModelRegistry', () => {
 })
 
 describe('registry helpers', () => {
-  const reg: ModelRegistry = { version: 2, providers: [provider], models: [model], combos: [] }
+  const reg: ModelRegistry = { version: 3, providers: [provider], models: [model], combos: [] }
 
   it('finds providers and models by id', () => {
     expect(findProvider(reg, 'openclaw/anthropic')?.label).toBe('OpenClaw')

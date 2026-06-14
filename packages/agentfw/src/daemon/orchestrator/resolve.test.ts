@@ -4,7 +4,7 @@ import type { RoutingPolicy } from '../../core/routing-policy.ts'
 
 const mockState = vi.hoisted(() => ({
   policy: { version: 4, agents: {} } as RoutingPolicy,
-  registry: { version: 2, providers: [], models: [], combos: [] } as ModelRegistry,
+  registry: { version: 3, providers: [], models: [], combos: [] } as ModelRegistry,
 }))
 
 vi.mock('../routing/load.ts', () => ({
@@ -16,19 +16,28 @@ vi.mock('../routing/load.ts', () => ({
 const { resolveRoute } = await import('./resolve.ts')
 
 const REGISTRY: ModelRegistry = {
-  version: 2,
+  version: 3,
   combos: [
     {
-      id: 'combo-failover',
-      label: 'failover',
-      members: [{ modelId: 'gpt-x', switchOn: [{ kind: 'error' }] }, { modelId: 'claude-x' }],
+      id: 'combo-panel',
+      label: 'panel',
+      panel: [
+        {
+          modelId: 'gpt-x',
+          switchOn: [{ kind: 'error' }],
+          fallback: { modelId: 'claude-x' },
+        },
+        { modelId: 'claude-x' },
+      ],
+      judge: { modelId: 'claude-x' },
+      synthesizer: { modelId: 'gpt-x' },
       origin: 'manual',
     },
     {
       id: 'combo-vision',
-      label: 'text + vision',
-      members: [{ modelId: 'claude-x' }],
-      capabilities: { vision: { via: 'companion', modelId: 'vision-x', providerId: 'p-oai' } },
+      label: 'panel + vision companion',
+      panel: [{ modelId: 'claude-x' }],
+      vision: { modelId: 'vision-x', providerId: 'p-oai' },
       origin: 'manual',
     },
   ],
@@ -220,42 +229,68 @@ describe('resolveRoute', () => {
     expect(resolved.configuredTarget).toEqual({ kind: 'model', id: 'gpt-x' })
   })
 
-  it('dereferences a composite target into a chain (combo owns the members)', () => {
+  it('dereferences a composite target into a fusion route with per-slot failover', () => {
     mockState.policy.agents = {
-      'agent/openai': { target: { kind: 'composite', comboId: 'combo-failover' } },
+      'agent/openai': { target: { kind: 'composite', comboId: 'combo-panel' } },
     }
     const resolved = resolveRoute('agent/openai', 'openai-chat')
-    expect(resolved.kind).toBe('chain')
-    if (resolved.kind !== 'chain') return
-    expect(resolved.members.map((m) => m.model.id)).toEqual(['gpt-x', 'claude-x'])
-    expect(resolved.members[0]?.switchOn).toEqual([{ kind: 'error' }])
+    expect(resolved.kind).toBe('fusion')
+    if (resolved.kind !== 'fusion') return
+    // Two panel slots; the first is a primary→fallback failover chain.
+    expect(resolved.panel.map((p) => p.members.map((m) => m.model.id))).toEqual([
+      ['gpt-x', 'claude-x'],
+      ['claude-x'],
+    ])
+    expect(resolved.panel[0]?.members[0]?.switchOn).toEqual([{ kind: 'error' }])
+    expect(resolved.judge.model.id).toBe('claude-x')
+    expect(resolved.synthesizer.model.id).toBe('gpt-x')
+    expect(resolved.configuredTarget).toEqual({ kind: 'combo', id: 'combo-panel' })
   })
 
-  it('a 1-member composite with a vision companion collapses to model but keeps the companion', () => {
+  it('resolves the combo-level vision companion, defaulting judge + synthesizer to the panel', () => {
     mockState.policy.agents = {
       'agent/anthropic': { target: { kind: 'composite', comboId: 'combo-vision' } },
     }
     const resolved = resolveRoute('agent/anthropic', 'anthropic')
-    expect(resolved.kind).toBe('model')
-    if (resolved.kind !== 'model') return
-    expect(resolved.model.id).toBe('claude-x')
-    const vision = resolved.capabilities.vision
-    expect(vision?.via).toBe('companion')
-    if (vision?.via !== 'companion') return
-    expect(vision.ref.model.id).toBe('vision-x')
+    expect(resolved.kind).toBe('fusion')
+    if (resolved.kind !== 'fusion') return
+    expect(resolved.panel[0]?.members[0]?.model.id).toBe('claude-x')
+    expect(resolved.vision?.model.id).toBe('vision-x')
+    // No judge/synthesizer configured → both default to the first panel member.
+    expect(resolved.judge.model.id).toBe('claude-x')
+    expect(resolved.synthesizer.model.id).toBe('claude-x')
+  })
+
+  it('drops an unresolvable fusion panel slot but keeps the rest', () => {
+    mockState.registry = {
+      ...REGISTRY,
+      combos: [
+        {
+          id: 'combo-partial',
+          label: 'partial',
+          panel: [{ modelId: 'nope' }, { modelId: 'gpt-x' }],
+          origin: 'manual',
+        },
+      ],
+    }
+    mockState.policy.agents = {
+      'agent/openai': { target: { kind: 'composite', comboId: 'combo-partial' } },
+    }
+    const resolved = resolveRoute('agent/openai', 'openai-chat')
+    expect(resolved.kind).toBe('fusion')
+    if (resolved.kind !== 'fusion') return
+    expect(resolved.panel.map((p) => p.members[0]?.model.id)).toEqual(['gpt-x'])
   })
 
   it('a composite route ignores the route-level capabilities (combo is source of truth)', () => {
     mockState.policy.agents = {
       'agent/openai': {
-        target: { kind: 'composite', comboId: 'combo-failover' },
+        target: { kind: 'composite', comboId: 'combo-panel' },
         capabilities: { vision: { via: 'companion', modelId: 'vision-x', providerId: 'p-oai' } },
       },
     }
     const resolved = resolveRoute('agent/openai', 'openai-chat')
-    expect(resolved.kind).toBe('chain')
-    if (resolved.kind !== 'chain') return
-    expect(resolved.capabilities.vision).toBeUndefined()
+    expect(resolved.kind).toBe('fusion')
   })
 
   it('passes through an unknown composite combo id', () => {

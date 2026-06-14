@@ -32,17 +32,22 @@ function describeTarget(t: RoutingTarget | undefined, combos: CombinationModel[]
   if (!t || t.kind === 'passthrough') return 'passthrough (no model swap)'
   if (t.kind === 'composite') {
     const c = combos.find((x) => x.id === t.comboId)
-    return c ? `combination: ${c.label}` : `combination: ${t.comboId} (missing)`
+    return c ? `fusion: ${c.label}` : `fusion: ${t.comboId} (missing)`
   }
   return t.members.map((m) => m.modelId).join(' → ')
 }
 
-// A combination's one-line summary for the read-only Details column.
+// A fusion's one-line summary for the read-only Details column.
 function comboSummary(c: CombinationModel): string {
-  const parts = [c.members.map((m) => m.modelId).join(' → ')]
-  if (c.capabilities?.vision?.via === 'companion')
-    parts.push(`vision → ${c.capabilities.vision.modelId}`)
-  if (c.capabilities?.web_search) parts.push('web_search')
+  const panel = c.panel
+    .map((m) => (m.fallback ? `${m.modelId}→${m.fallback.modelId}` : m.modelId))
+    .join(' + ')
+  const parts = [`panel: ${panel}`]
+  const judge = c.judge?.modelId ?? 'synthesizer'
+  const synth = c.synthesizer?.modelId ?? c.panel[0]?.modelId ?? '—'
+  parts.push(`judge ${judge} → synth ${synth}`)
+  if (c.vision) parts.push(`vision ${c.vision.modelId}`)
+  if (c.webSearch) parts.push('web search')
   return parts.join(' · ')
 }
 
@@ -67,8 +72,8 @@ export function RoutesTab() {
     void load()
   }, [load])
 
-  // Assign the route a single model, a combination, or passthrough. Failover /
-  // vision / tools all live inside a combination now — a plain model is exactly
+  // Assign the route a single model, a fusion model, or passthrough. The panel /
+  // judge / synthesizer all live inside a fusion now — a plain model is exactly
   // one model.
   const onChangeRoute = async (routeKey: string, value: string, models: ModelEntry[]) => {
     setBusy(routeKey)
@@ -123,7 +128,7 @@ export function RoutesTab() {
         <h2>Per-agent routes</h2>
         <p className="hint">
           Each wired agent passes through unchanged, swaps to a single model, or uses a{' '}
-          <strong>combination model</strong> (failover chain + vision + tools), built on the{' '}
+          <strong>fusion model</strong> (parallel panel → judge → synthesize), built on the{' '}
           <strong>Models</strong> tab. <code>&lt;agent&gt;/*</code> is the agent-wide default.
         </p>
         {policy.routes.length === 0 ? (
@@ -143,8 +148,8 @@ export function RoutesTab() {
                 <th>
                   Details
                   <HelpTip>
-                    For a combination model, the chain + vision companion + tools it carries. Edit
-                    these on the <strong>Models</strong> tab — a route just picks one.
+                    For a fusion model, the panel + judge + synthesizer it carries. Edit these on the{' '}
+                    <strong>Models</strong> tab — a route just picks one.
                   </HelpTip>
                 </th>
               </tr>
@@ -168,7 +173,7 @@ export function RoutesTab() {
                       >
                         <option value={PASSTHROUGH}>passthrough (no swap)</option>
                         {combos.length > 0 && (
-                          <optgroup label="Combination models">
+                          <optgroup label="Model Fusion">
                             {combos.map((c) => (
                               <option key={c.id} value={`${COMBO_PREFIX}${c.id}`}>
                                 {c.label}
@@ -189,7 +194,7 @@ export function RoutesTab() {
                       {combo ? (
                         comboSummary(combo)
                       ) : target?.kind === 'composite' ? (
-                        <span title="this combination no longer exists">missing combination</span>
+                        <span title="this fusion model no longer exists">missing fusion</span>
                       ) : (
                         '—'
                       )}

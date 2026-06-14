@@ -8,6 +8,9 @@
 import type { Context } from 'hono'
 import {
   type CombinationModel,
+  type FusionEndpoint,
+  type FusionMember,
+  MAX_FUSION_PANEL,
   type Modality,
   type ModelApi,
   type ModelCost,
@@ -22,8 +25,6 @@ import {
   readModelRegistry,
 } from '../../core/model-registry.ts'
 import {
-  type CapabilityFulfillment,
-  type CapabilityId,
   type ChainMember,
   type RoutingTarget,
   type SwitchRule,
@@ -300,53 +301,45 @@ export async function handleDeleteModel(c: Context): Promise<Response> {
 
 // ── POST /api/routing/combo ───────────────────────────────────────
 //
-// Combination models — a reusable failover chain + capabilities (vision
-// companion, web_search tool provider) stored in the registry. A route targets
-// one by id (`{kind:'composite', comboId}`); the combo, not the route, owns its
-// members and capabilities.
+// Combination models — agentfw's local OpenRouter Fusion: a reusable panel of
+// models (run in parallel) + an optional judge + synthesizer, stored in the
+// registry. A route targets one by id (`{kind:'composite', comboId}`); the
+// combo, not the route, owns its panel.
 
-/** Normalize + validate a combo's capabilities map: vision must point at a real
- *  (companion) model; web_search at a real local tool provider. */
-async function normalizeComboCapabilities(
-  raw: unknown,
-): Promise<{ caps?: Partial<Record<CapabilityId, CapabilityFulfillment>> } | { error: string }> {
-  if (raw == null) return {}
-  if (!isObj(raw)) return { error: 'capabilities must be an object' }
-  const out: Partial<Record<CapabilityId, CapabilityFulfillment>> = {}
-  const reg = await readModelRegistry()
+/** Normalize a {modelId, providerId?} endpoint (judge / synthesizer / vision
+ *  bridge) from request input. Returns undefined when absent or invalid. */
+function normalizeEndpointInput(raw: unknown): FusionEndpoint | undefined {
+  if (!isObj(raw)) return undefined
+  const modelId = typeof raw.modelId === 'string' ? raw.modelId.trim() : ''
+  if (!modelId) return undefined
+  const providerId =
+    typeof raw.providerId === 'string' && raw.providerId.trim() !== ''
+      ? raw.providerId.trim()
+      : undefined
+  return { modelId, ...(providerId ? { providerId } : {}) }
+}
 
-  const vision = raw.vision
-  if (isObj(vision)) {
-    if (vision.via !== 'companion') return { error: "vision capability must be via 'companion'" }
-    const modelId = typeof vision.modelId === 'string' ? vision.modelId.trim() : ''
-    if (!modelId) return { error: 'vision companion needs a modelId' }
-    const providerId =
-      typeof vision.providerId === 'string' && vision.providerId !== ''
-        ? vision.providerId
-        : undefined
-    if (!findModel(reg, modelId, providerId)) {
-      return { error: `unknown vision companion "${providerId ? `${providerId}/` : ''}${modelId}"` }
-    }
-    out.vision = providerId
-      ? { via: 'companion', modelId, providerId }
-      : { via: 'companion', modelId }
+/** Normalize one panel member from request input — the model, its per-member
+ *  failover rules (`switchOn` — token/USD caps + error), and its `fallback`
+ *  backup model. */
+function normalizePanelMemberInput(raw: unknown): FusionMember | { error: string } {
+  if (!isObj(raw)) return { error: 'each panel member must be an object' }
+  const modelId = typeof raw.modelId === 'string' ? raw.modelId.trim() : ''
+  if (!modelId) return { error: 'each panel member needs a modelId' }
+  const providerId =
+    typeof raw.providerId === 'string' && raw.providerId.trim() !== ''
+      ? raw.providerId.trim()
+      : undefined
+  const switchOn = Array.isArray(raw.switchOn)
+    ? raw.switchOn.map(normalizeSwitchInput).filter((r): r is SwitchRule => r != null)
+    : []
+  const fallback = normalizeEndpointInput(raw.fallback)
+  return {
+    modelId,
+    ...(providerId ? { providerId } : {}),
+    ...(switchOn.length > 0 ? { switchOn } : {}),
+    ...(fallback ? { fallback } : {}),
   }
-
-  const ws = raw.web_search
-  if (isObj(ws)) {
-    if (ws.via !== 'local') return { error: "web_search capability must be via 'local'" }
-    const providerId =
-      typeof ws.providerId === 'string' && ws.providerId !== '' ? ws.providerId : undefined
-    if (providerId) {
-      const store = await readToolProviders()
-      if (!store.providers.some((p) => p.id === providerId && p.kind === 'web_search')) {
-        return { error: `unknown web_search tool provider "${providerId}"` }
-      }
-    }
-    out.web_search = providerId ? { via: 'local', providerId } : { via: 'local' }
-  }
-
-  return { caps: Object.keys(out).length > 0 ? out : undefined }
 }
 
 export async function handlePostCombo(c: Context): Promise<Response> {
@@ -357,40 +350,77 @@ export async function handlePostCombo(c: Context): Promise<Response> {
   const name = typeof body.label === 'string' ? body.label.trim() : ''
   if (!providedId && !name) return c.json({ error: 'combination model name required' }, 400)
 
-  if (!Array.isArray(body.members) || body.members.length === 0) {
-    return c.json({ error: 'a combination model needs at least one model' }, 400)
+  // Accept `panel` (current) or `members` (legacy failover shape) as the panel.
+  const rawPanel = Array.isArray(body.panel)
+    ? body.panel
+    : Array.isArray(body.members)
+      ? body.members
+      : null
+  if (!rawPanel || rawPanel.length === 0) {
+    return c.json({ error: 'a fusion model needs at least one panel member' }, 400)
   }
-  const members: ChainMember[] = []
-  for (const m of body.members) {
-    const norm = normalizeMemberInput(m)
-    if ('error' in norm) return c.json({ error: norm.error }, 400)
-    members.push(norm)
+  if (rawPanel.length > MAX_FUSION_PANEL) {
+    return c.json({ error: `a fusion panel can have at most ${MAX_FUSION_PANEL} members` }, 400)
   }
 
   const reg0 = await readModelRegistry()
-  for (const m of members) {
-    if (!findModel(reg0, m.modelId, m.providerId)) {
-      const where = m.providerId ? `model "${m.providerId}/${m.modelId}"` : `model "${m.modelId}"`
-      return c.json({ error: `unknown ${where}` }, 400)
-    }
+  const toolStore = await readToolProviders()
+  // Validate one model endpoint exists; returns an error string or null.
+  const unknownModel = (e: FusionEndpoint | undefined, role: string): string | null => {
+    if (!e) return null
+    if (findModel(reg0, e.modelId, e.providerId)) return null
+    return `unknown ${role} model "${e.providerId ? `${e.providerId}/` : ''}${e.modelId}"`
   }
 
-  const capsResult = await normalizeComboCapabilities(body.capabilities)
-  if ('error' in capsResult) return c.json({ error: capsResult.error }, 400)
+  const panel: FusionMember[] = []
+  for (const m of rawPanel) {
+    const norm = normalizePanelMemberInput(m)
+    if ('error' in norm) return c.json({ error: norm.error }, 400)
+    const memberErr =
+      unknownModel({ modelId: norm.modelId, providerId: norm.providerId }, 'panel') ??
+      unknownModel(norm.fallback, 'fallback')
+    if (memberErr) return c.json({ error: memberErr }, 400)
+    panel.push(norm)
+  }
+
+  const vision = normalizeEndpointInput(body.vision)
+  const judge = normalizeEndpointInput(body.judge)
+  const synthesizer = normalizeEndpointInput(body.synthesizer)
+  const endpointErr =
+    unknownModel(vision, 'vision') ??
+    unknownModel(judge, 'judge') ??
+    unknownModel(synthesizer, 'synthesizer')
+  if (endpointErr) return c.json({ error: endpointErr }, 400)
+
+  // Fusion-level web_search pin → must be a real web_search tool provider.
+  let webSearch: { providerId?: string } | undefined
+  if (isObj(body.webSearch)) {
+    const pid =
+      typeof body.webSearch.providerId === 'string' && body.webSearch.providerId.trim() !== ''
+        ? body.webSearch.providerId.trim()
+        : undefined
+    if (pid && !toolStore.providers.some((p) => p.id === pid && p.kind === 'web_search')) {
+      return c.json({ error: `unknown web_search tool provider "${pid}"` }, 400)
+    }
+    webSearch = pid ? { providerId: pid } : {}
+  }
 
   const id =
     providedId ||
     deriveId(
       name,
       reg0.combos.map((x) => x.id),
-      'combo',
+      'fusion',
     )
   const label = name || reg0.combos.find((x) => x.id === id)?.label || id
   const combo: CombinationModel = {
     id,
     label,
-    members,
-    ...(capsResult.caps ? { capabilities: capsResult.caps } : {}),
+    panel,
+    ...(vision ? { vision } : {}),
+    ...(webSearch ? { webSearch } : {}),
+    ...(judge ? { judge } : {}),
+    ...(synthesizer ? { synthesizer } : {}),
     origin: 'manual',
   }
 

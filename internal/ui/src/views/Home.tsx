@@ -12,7 +12,7 @@ import type {
 
 function describeTarget(t: RoutingTarget | undefined): string {
   if (!t || t.kind === 'passthrough') return 'passthrough (no model swap)'
-  if (t.kind === 'composite') return `combination: ${t.comboId}`
+  if (t.kind === 'composite') return `fusion: ${t.comboId}`
   return t.members.map((m) => m.modelId).join(' → ')
 }
 

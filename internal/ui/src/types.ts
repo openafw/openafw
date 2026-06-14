@@ -200,13 +200,32 @@ export type CapabilityFulfillment =
   | { via: 'companion'; modelId: string; providerId?: string }
   | { via: 'local'; providerId?: string }
 
-// A reusable combination model: a failover chain + capabilities (vision
-// companion, web_search tool provider). Routes target one by id.
+// Model Fusion — agentfw's local take on OpenRouter Fusion. A `panel` of models
+// answers the prompt in parallel, a `judge` distils their answers into a
+// structured analysis, and a `synthesizer` writes the final answer grounded in
+// it. Routes target a fusion model by id. Each panel member can carry a vision
+// bridge (pre-describe images for a text-only member) and per-member web_search.
+export type FusionEndpoint = { modelId: string; providerId?: string }
+
+// A fusion panel member: the primary model, its per-member failover rules
+// (token/USD caps + error), and the backup model they switch to.
+export type FusionMember = {
+  modelId: string
+  providerId?: string
+  switchOn?: SwitchRule[]
+  fallback?: FusionEndpoint
+}
+
 export type CombinationModel = {
   id: string
   label: string
-  members: ChainMember[]
-  capabilities?: Partial<Record<CapabilityId, CapabilityFulfillment>>
+  panel: FusionMember[]
+  // One multimodal companion for the whole fusion, plus a panel-wide web_search
+  // pin. Configured at the fusion level, not per member.
+  vision?: FusionEndpoint
+  webSearch?: { providerId?: string }
+  judge?: FusionEndpoint
+  synthesizer?: FusionEndpoint
   origin?: string
 }
 

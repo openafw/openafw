@@ -4138,6 +4138,108 @@ button:disabled {
   gap: 0.35rem;
 }
 
+/* model fusion — one panel member with its per-member vision/web-search caps */
+.fusion-member {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+}
+.fusion-member-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-left: 0.5rem;
+}
+.fusion-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+.fusion-cap select {
+  font-size: 0.85rem;
+}
+
+/* model fusion — "how it works" pipeline diagram */
+.fusion-how {
+  margin: 0.75rem 0 1.25rem;
+}
+.fusion-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.fusion-step {
+  flex: 1 1 160px;
+  position: relative;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+}
+.fusion-step strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.fusion-step p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.fusion-step-key {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.fusion-step-n {
+  position: absolute;
+  top: -0.6rem;
+  left: -0.6rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fusion-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--fg-muted);
+  font-size: 1.2rem;
+}
+
+/* provider → models setup step */
+.setup-actions {
+  margin: 0.5rem 0;
+}
+.setup-footer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* one-shot prompt after an action (e.g. "provider added — now add a model") */
+.flash {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 0.9rem;
+}
+
 /* tasks (threads) — list + detail */
 .task-title {
   color: var(--fg);

@@ -346,7 +346,10 @@ export async function captureChain(
   // vision loop. The capture path only reads `id` for the parent row;
   // the discriminator is recorded verbatim on the orchestration tag so
   // the UI can still distinguish.
-  configuredTarget: { kind: 'chain'; id: string } | { kind: 'model'; id: string },
+  configuredTarget:
+    | { kind: 'chain'; id: string }
+    | { kind: 'model'; id: string }
+    | { kind: 'combo'; id: string },
   parentTiming: { ts: number; durMs: number },
   risk: RiskTag[],
   /** Tool executions agentfw ran during this fan-out (web_search via

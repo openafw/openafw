@@ -180,4 +180,98 @@ describe('routing registry writes', () => {
       reasoningEffort: 'high',
     })
   })
+
+  it('rewrites fusion references when a model wire id is renamed', async () => {
+    state.reg.providers = [
+      {
+        id: 'w-ciykj-cn',
+        label: 'w-ciykj-cn',
+        baseUrl: 'https://w.ciykj.cn',
+        api: 'openai-responses',
+        auth: { kind: 'passthrough' },
+        origin: 'manual',
+      },
+      {
+        id: 'backup',
+        label: 'backup',
+        baseUrl: 'https://backup.example',
+        api: 'openai-responses',
+        auth: { kind: 'passthrough' },
+        origin: 'manual',
+      },
+    ]
+    state.reg.models = [
+      {
+        id: 'GPT-5.5',
+        providerId: 'w-ciykj-cn',
+        label: 'GPT-5.5',
+        input: ['text'],
+        origin: 'manual',
+      },
+      {
+        id: 'gpt-5.5',
+        providerId: 'backup',
+        label: 'gpt-5.5',
+        input: ['text'],
+        origin: 'manual',
+      },
+    ]
+    state.reg.combos = [
+      {
+        id: 'gpt-claude',
+        label: 'gpt+claude',
+        panel: [
+          {
+            modelId: 'GPT-5.5',
+            providerId: 'w-ciykj-cn',
+            fallback: { modelId: 'gpt-5.5', providerId: 'backup' },
+          },
+          {
+            modelId: 'other',
+            providerId: 'backup',
+            fallback: { modelId: 'GPT-5.5', providerId: 'w-ciykj-cn' },
+          },
+        ],
+        judge: { modelId: 'GPT-5.5', providerId: 'w-ciykj-cn' },
+        synthesizer: { modelId: 'GPT-5.5', providerId: 'w-ciykj-cn' },
+        origin: 'manual',
+      },
+    ]
+
+    const res = await handlePostModel(
+      jsonContext({
+        previousId: 'GPT-5.5',
+        id: 'gpt-5.5',
+        providerId: 'w-ciykj-cn',
+        input: ['text'],
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(state.reg.models).toContainEqual(
+      expect.objectContaining({ id: 'gpt-5.5', providerId: 'w-ciykj-cn' }),
+    )
+    expect(state.reg.models).not.toContainEqual(
+      expect.objectContaining({ id: 'GPT-5.5', providerId: 'w-ciykj-cn' }),
+    )
+    expect(state.reg.models).toContainEqual(
+      expect.objectContaining({ id: 'gpt-5.5', providerId: 'backup' }),
+    )
+    expect(state.reg.combos[0]).toMatchObject({
+      panel: [
+        {
+          modelId: 'gpt-5.5',
+          providerId: 'w-ciykj-cn',
+          fallback: { modelId: 'gpt-5.5', providerId: 'backup' },
+        },
+        {
+          modelId: 'other',
+          providerId: 'backup',
+          fallback: { modelId: 'gpt-5.5', providerId: 'w-ciykj-cn' },
+        },
+      ],
+      judge: { modelId: 'gpt-5.5', providerId: 'w-ciykj-cn' },
+      synthesizer: { modelId: 'gpt-5.5', providerId: 'w-ciykj-cn' },
+    })
+  })
 })

@@ -180,6 +180,7 @@ export async function removeProvider(id: string): Promise<void> {
  *  string sent to the provider; label mirrors it. */
 export async function saveModel(m: {
   id: string
+  previousId?: string
   providerId: string
   label?: string
   input: string[]

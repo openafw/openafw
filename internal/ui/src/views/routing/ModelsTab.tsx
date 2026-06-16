@@ -245,13 +245,13 @@ export function ModelsTab() {
     void run(async () => {
       await saveModel({
         id,
+        ...(editingModel && editingModel !== id ? { previousId: editingModel } : {}),
         providerId,
         label: id,
         input: draft.input,
         ...(draft.window > 0 ? { contextWindow: draft.window } : {}),
         ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       })
-      if (editingModel && editingModel !== id) await removeModel(editingModel, providerId)
       setDraft(EMPTY_DRAFT)
       setEditingModel(null)
       modelNameRef.current?.focus()

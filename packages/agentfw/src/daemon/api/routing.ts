@@ -267,11 +267,67 @@ function normalizeCostInput(raw: unknown): ModelCost | undefined {
   }
 }
 
+function rewriteFusionEndpoint(
+  endpoint: FusionEndpoint | undefined,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): FusionEndpoint | undefined {
+  if (!endpoint) return undefined
+  if (endpoint.modelId !== fromModelId || endpoint.providerId !== providerId) return endpoint
+  return { ...endpoint, modelId: toModelId }
+}
+
+function rewriteFusionMember(
+  member: FusionMember,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): FusionMember {
+  const primary = rewriteFusionEndpoint(member, fromModelId, toModelId, providerId)
+  const fallback = rewriteFusionEndpoint(member.fallback, fromModelId, toModelId, providerId)
+  if (primary === member && fallback === member.fallback) return member
+  return {
+    ...member,
+    modelId: primary?.modelId ?? member.modelId,
+    ...(primary?.providerId ? { providerId: primary.providerId } : {}),
+    ...(fallback ? { fallback } : {}),
+  }
+}
+
+function rewriteComboModelRefs(
+  combo: CombinationModel,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): CombinationModel {
+  const panel = combo.panel.map((m) => rewriteFusionMember(m, fromModelId, toModelId, providerId))
+  const vision = rewriteFusionEndpoint(combo.vision, fromModelId, toModelId, providerId)
+  const judge = rewriteFusionEndpoint(combo.judge, fromModelId, toModelId, providerId)
+  const synthesizer = rewriteFusionEndpoint(combo.synthesizer, fromModelId, toModelId, providerId)
+  if (
+    panel.every((m, i) => m === combo.panel[i]) &&
+    vision === combo.vision &&
+    judge === combo.judge &&
+    synthesizer === combo.synthesizer
+  ) {
+    return combo
+  }
+  return {
+    ...combo,
+    panel,
+    ...(vision ? { vision } : {}),
+    ...(judge ? { judge } : {}),
+    ...(synthesizer ? { synthesizer } : {}),
+  }
+}
+
 export async function handlePostModel(c: Context): Promise<Response> {
   const body = await jsonBody(c)
   if (!body) return c.json({ error: 'malformed JSON body' }, 400)
 
   const id = typeof body.id === 'string' ? body.id.trim() : ''
+  const previousId = typeof body.previousId === 'string' ? body.previousId.trim() : ''
   const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : ''
   if (!id) return c.json({ error: 'model id required' }, 400)
   if (!providerId) return c.json({ error: 'providerId required' }, 400)
@@ -299,12 +355,24 @@ export async function handlePostModel(c: Context): Promise<Response> {
     origin: 'manual',
   }
 
+  const isRename = previousId !== '' && previousId !== id
   const reg = await mutateModelRegistry((r) => ({
     ...r,
     // Dedupe by (providerId, id) — the same model id can legitimately
     // exist under more than one provider, so a same-id row under a
     // different provider must survive this upsert untouched.
-    models: [...r.models.filter((m) => !(m.id === id && m.providerId === providerId)), model],
+    models: [
+      ...r.models.filter((m) => {
+        if (m.providerId !== providerId) return true
+        if (m.id === id) return false
+        if (isRename && m.id === previousId) return false
+        return true
+      }),
+      model,
+    ],
+    combos: isRename
+      ? r.combos.map((combo) => rewriteComboModelRefs(combo, previousId, id, providerId))
+      : r.combos,
   }))
   return c.json({ ok: true, models: reg.models })
 }

@@ -39,6 +39,8 @@ export const runCommand = new Command('run')
   .option('--raw', 'bypass agentfw entirely for this instance (no capture, no routing)')
   .option('--agent <id>', 'force the agent type instead of inferring it from the command')
   .option('--ephemeral', 'remove the instance routing policy when the process exits')
+  .allowUnknownOption()
+  .passThroughOptions()
   .action(async (command: string[], opts: RunOpts) => {
     const fail = (m: string): never => {
       logger.print(`error: ${m}`)
@@ -55,9 +57,7 @@ export const runCommand = new Command('run')
     const wiring = wiringForBin(bin!, opts.agent)
     if (!wiring) {
       fail(
-        `agentfw run can't wrap "${opts.agent ?? basename(bin!)}" yet — it supports ` +
-          'launch-per-task agents (claude, codex). For daemon agents like OpenClaw, ' +
-          'run `agentfw openclaw` for setup steps.',
+        `agentfw run can't wrap "${opts.agent ?? basename(bin!)}" yet — it supports launch-per-task agents (claude, codex). For daemon agents like OpenClaw, run \`agentfw openclaw\` for setup steps.`,
       )
     }
 

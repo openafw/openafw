@@ -8,15 +8,16 @@ import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { logger } from '../../core/logger.ts'
 import type { ModelEntry } from '../../core/model-registry.ts'
-import { policyKeyFor, type RoutingTarget } from '../../core/routing-policy.ts'
+import { type RoutingTarget, policyKeyFor } from '../../core/routing-policy.ts'
 import { daemonFetch } from '../util/daemon-client.ts'
 import { agentfwUrlForInstance } from '../wire/url.ts'
 import { decideAutoCompactWindow } from './auto-compact.ts'
+import { resolveLaunchBin } from './resolve-bin.ts'
 import { type LaunchWiring, wiringForBin } from './wiring.ts'
 
 /** Slug a label into a URL/policy-safe instance id; fall back to the pid. */
 export function instanceIdFrom(label: string | undefined): string {
-  if (label && label.trim()) {
+  if (label?.trim()) {
     const slug = label
       .trim()
       .toLowerCase()
@@ -96,8 +97,7 @@ export async function launchInstance(opts: LaunchInstanceOpts): Promise<void> {
   const wiring: LaunchWiring | undefined = wiringForBin(opts.bin, opts.agentOverride)
   if (!wiring) {
     throw new Error(
-      `agentfw can't launch "${opts.agentOverride ?? opts.bin}" — it wraps launch-per-task ` +
-        'agents (claude, codex). For app/daemon agents, run `agentfw <agent>` for setup steps.',
+      `agentfw can't launch "${opts.agentOverride ?? opts.bin}" — it wraps launch-per-task agents (claude, codex). For app/daemon agents, run \`agentfw <agent>\` for setup steps.`,
     )
   }
 
@@ -134,10 +134,16 @@ export async function launchInstance(opts: LaunchInstanceOpts): Promise<void> {
         : 'type default'
   logger.print(`▶ ${wiring.agent}@${instanceId}  ${mode}`)
 
-  const child = spawn(opts.bin, [...argvPrefix, ...opts.args], {
-    stdio: 'inherit',
-    env: { ...process.env, ...envOverride },
-  })
+  const resolvedBin = await resolveLaunchBin(opts.bin)
+  const child = spawn(
+    resolvedBin.command,
+    [...resolvedBin.argsPrefix, ...argvPrefix, ...opts.args],
+    {
+      stdio: 'inherit',
+      env: { ...process.env, ...envOverride },
+      shell: resolvedBin.shell,
+    },
+  )
 
   const cleanup = async (): Promise<void> => {
     if (opts.ephemeral && !opts.raw) {

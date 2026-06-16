@@ -98,10 +98,7 @@ describe('resolveRoute', () => {
       'agent/openai': {
         target: {
           kind: 'chain',
-          members: [
-            { modelId: 'gpt-x', switchOn: [{ kind: 'error' }] },
-            { modelId: 'claude-x' },
-          ],
+          members: [{ modelId: 'gpt-x', switchOn: [{ kind: 'error' }] }, { modelId: 'claude-x' }],
         },
       },
     }
@@ -213,6 +210,27 @@ describe('resolveRoute', () => {
     expect(resolved.model.id).toBe('gpt-x')
     expect(resolved.provider.id).toBe('p-oai')
     expect(resolved.configuredTarget).toEqual({ kind: 'model', id: 'gpt-x' })
+  })
+
+  it('resolves model reasoning effort overrides over provider defaults', () => {
+    mockState.registry = {
+      ...REGISTRY,
+      providers: REGISTRY.providers.map((p) =>
+        p.id === 'p-oai' ? { ...p, reasoningEffort: 'high' } : p,
+      ),
+      models: REGISTRY.models.map((m) =>
+        m.id === 'gpt-x' ? { ...m, reasoningEffort: 'xhigh' } : m,
+      ),
+    }
+    mockState.policy.agents = {
+      'agent/openai': { target: { kind: 'chain', members: [{ modelId: 'gpt-x' }] } },
+    }
+
+    const resolved = resolveRoute('agent/openai', 'openai-chat')
+
+    expect(resolved.kind).toBe('model')
+    if (resolved.kind !== 'model') return
+    expect(resolved.reasoningEffort).toBe('xhigh')
   })
 
   it('resolves a cross-protocol model swap (1-member chain)', () => {

@@ -5,11 +5,15 @@
 import process from 'node:process'
 import { Command } from 'commander'
 import { logger } from '../../core/logger.ts'
-import type {
-  CombinationModel,
-  ModelApi,
-  ModelEntry,
-  ProviderEntry,
+import {
+  type CombinationModel,
+  GENERATION_PATH_MODES,
+  type GenerationPathMode,
+  type ModelApi,
+  type ModelEntry,
+  type ProviderEntry,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
 } from '../../core/model-registry.ts'
 import { DAEMON_BASE_URL } from '../../core/paths.ts'
 import type {
@@ -26,6 +30,26 @@ import {
 import { promptSecret } from '../util/prompt.ts'
 
 const MODEL_APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-responses']
+
+function normalizeReasoningEffortFlag(raw?: string): ReasoningEffort | undefined {
+  if (raw == null) return undefined
+  const value = raw.trim().toLowerCase()
+  return REASONING_EFFORTS.includes(value as ReasoningEffort)
+    ? (value as ReasoningEffort)
+    : undefined
+}
+
+function normalizeGenerationPathFlag(raw?: string): GenerationPathMode | undefined {
+  if (raw == null) return undefined
+  const value = raw.trim().toLowerCase()
+  return GENERATION_PATH_MODES.includes(value as GenerationPathMode)
+    ? (value as GenerationPathMode)
+    : undefined
+}
+
+function providerSecretRef(id: string): string {
+  return `provider:${id}`
+}
 
 type RegistryResponse = {
   providers: ProviderEntry[]
@@ -176,14 +200,18 @@ const showCmd = new Command('show')
       const routing = policy.agents[routeKey]
       logger.print(`Route:   ${route.routeKey}`)
       logger.print(`Decoder: ${route.decoder}`)
-      logger.print(`Target:  ${routing ? describeTarget(routing.target, reg.combos) : 'passthrough'}`)
+      logger.print(
+        `Target:  ${routing ? describeTarget(routing.target, reg.combos) : 'passthrough'}`,
+      )
       const target = routing?.target
       if (target?.kind === 'composite') {
         const c = reg.combos.find((x) => x.id === target.comboId)
         if (c) logger.print(`Fusion:  ${describeFusion(c)}`)
       }
       const vision = describeVision(routing)
-      logger.print(`Vision:  ${vision ? vision.replace('vision→', 'companion ') : 'native (routed model sees images)'}`)
+      logger.print(
+        `Vision:  ${vision ? vision.replace('vision→', 'companion ') : 'native (routed model sees images)'}`,
+      )
     }),
   )
 
@@ -268,7 +296,7 @@ type VisionOpts = { companion?: string; provider?: string; off?: boolean }
 const visionCmd = new Command('vision')
   .description(
     'Attach a multimodal companion to a route whose model is text-only, so images\n' +
-      "  are described by the companion before the routed model sees the request.\n" +
+      '  are described by the companion before the routed model sees the request.\n' +
       '  Examples:\n' +
       '    agentfw route vision claude-code/*                              # show current\n' +
       '    agentfw route vision claude-code/* --companion gpt-4o-mini      # pair a companion\n' +
@@ -277,7 +305,10 @@ const visionCmd = new Command('vision')
   )
   .argument('<routeKey>', 'route key, e.g. claude-code/* or claude-code/glm-4.6')
   .option('--companion <id>', 'multimodal model that handles images for this route')
-  .option('--provider <id>', 'disambiguate the companion when the id exists under several providers')
+  .option(
+    '--provider <id>',
+    'disambiguate the companion when the id exists under several providers',
+  )
   .option('--off', 'remove the vision companion — images go to the routed model as-is')
   .action((routeKey: string, opts: VisionOpts) =>
     run(async () => {
@@ -313,8 +344,7 @@ const visionCmd = new Command('vision')
       )
       if (model && !model.input.includes('image')) {
         logger.print(
-          `warning: companion "${opts.companion}" is not marked as accepting image input ` +
-            "— register it with image input or it can't describe the images.",
+          `warning: companion "${opts.companion}" is not marked as accepting image input — register it with image input or it can't describe the images.`,
         )
       }
       await apiFetch('POST', '/api/routing/capability', {
@@ -345,7 +375,9 @@ const fusionList = new Command('list')
     run(async () => {
       const reg = await apiFetch<RegistryResponse>('GET', '/api/routing/registry')
       if (!reg.combos || reg.combos.length === 0) {
-        logger.print('No fusion models yet. Build one on the dashboard (`agentfw ui` → Routing → Models).')
+        logger.print(
+          'No fusion models yet. Build one on the dashboard (`agentfw ui` → Routing → Models).',
+        )
         return
       }
       for (const c of reg.combos) {
@@ -368,6 +400,8 @@ type ProviderAddOpts = {
   header?: string
   label?: string
   key?: string
+  generationPath?: string
+  reasoningEffort?: string
 }
 
 const providerAdd = new Command('add')
@@ -379,6 +413,14 @@ const providerAdd = new Command('add')
   .option('--header <name>', 'header name for api-key auth, e.g. x-api-key')
   .option('--label <text>', 'display label')
   .option('--key <value>', 'API key (prompted without echo if omitted)')
+  .option(
+    '--generation-path <mode>',
+    `generation endpoint path mode: ${GENERATION_PATH_MODES.join(' | ')}`,
+  )
+  .option(
+    '--reasoning-effort <effort>',
+    `provider default reasoning effort: ${REASONING_EFFORTS.join(' | ')}`,
+  )
   .action((id: string, opts: ProviderAddOpts) =>
     run(async () => {
       if (!MODEL_APIS.includes(opts.api as ModelApi)) {
@@ -390,10 +432,22 @@ const providerAdd = new Command('add')
       if (opts.auth === 'api-key' && !opts.header) {
         return fail('--header is required for api-key auth')
       }
+      const generationPath = normalizeGenerationPathFlag(opts.generationPath)
+      if (opts.generationPath != null && !generationPath) {
+        return fail(`--generation-path must be one of ${GENERATION_PATH_MODES.join(', ')}`)
+      }
+      const reasoningEffort = normalizeReasoningEffortFlag(opts.reasoningEffort)
+      if (opts.reasoningEffort != null && !reasoningEffort) {
+        return fail(`--reasoning-effort must be one of ${REASONING_EFFORTS.join(', ')}`)
+      }
       let apiKey = opts.key
       if ((opts.auth === 'bearer' || opts.auth === 'api-key') && !apiKey) {
-        apiKey = await promptSecret(`API key for ${id}: `)
-        if (!apiKey) return fail('an API key is required for this auth kind')
+        const reg = await apiFetch<RegistryResponse>('GET', '/api/routing/registry')
+        const hasExistingSecret = reg.secretRefs.includes(providerSecretRef(id))
+        if (!hasExistingSecret) {
+          apiKey = await promptSecret(`API key for ${id}: `)
+          if (!apiKey) return fail('an API key is required for this auth kind')
+        }
       }
       await apiFetch('POST', '/api/routing/provider', {
         id,
@@ -403,6 +457,8 @@ const providerAdd = new Command('add')
         ...(opts.header ? { authHeader: opts.header } : {}),
         ...(opts.label ? { label: opts.label } : {}),
         ...(apiKey ? { apiKey } : {}),
+        ...(generationPath ? { generationPath } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       })
       logger.print(`✓ provider ${id} registered`)
     }),
@@ -426,8 +482,10 @@ const providerList = new Command('list').description('List registered providers.
       return
     }
     for (const p of reg.providers) {
+      const path = `path=${p.generationPath ?? 'versioned'}`
+      const effort = p.reasoningEffort ? ` effort=${p.reasoningEffort}` : ''
       logger.print(
-        `  ${p.id.padEnd(20)} ${p.api.padEnd(20)} ${p.auth.kind.padEnd(12)} ${p.origin.padEnd(8)} ${p.baseUrl}`,
+        `  ${p.id.padEnd(20)} ${p.api.padEnd(20)} ${path.padEnd(14)}${effort.padEnd(14)} ${p.auth.kind.padEnd(12)} ${p.origin.padEnd(8)} ${p.baseUrl}`,
       )
     }
   }),
@@ -448,6 +506,62 @@ const modelRm = new Command('rm')
     run(async () => {
       await apiFetch('DELETE', `/api/routing/model?id=${encodeURIComponent(id)}`)
       logger.print(`✓ model ${id} removed`)
+    }),
+  )
+
+type ModelSetOpts = {
+  provider?: string
+  reasoningEffort?: string
+  clearReasoningEffort?: boolean
+}
+
+const modelSet = new Command('set')
+  .description('Update model routing metadata.')
+  .argument('<id>', 'model id')
+  .option('--provider <id>', 'disambiguate provider id')
+  .option('--reasoning-effort <effort>', `model reasoning effort: ${REASONING_EFFORTS.join(' | ')}`)
+  .option('--clear-reasoning-effort', 'clear the model reasoning effort override')
+  .action((id: string, opts: ModelSetOpts) =>
+    run(async () => {
+      const wantsEffort = opts.reasoningEffort != null
+      const wantsClear = opts.clearReasoningEffort === true
+      if (wantsEffort === wantsClear) {
+        return fail('pass exactly one of --reasoning-effort or --clear-reasoning-effort')
+      }
+      const effort = normalizeReasoningEffortFlag(opts.reasoningEffort)
+      if (wantsEffort && !effort) {
+        return fail(`--reasoning-effort must be one of ${REASONING_EFFORTS.join(', ')}`)
+      }
+
+      const reg = await apiFetch<RegistryResponse>('GET', '/api/routing/registry')
+      const matches = reg.models.filter(
+        (m) => m.id === id && (!opts.provider || m.providerId === opts.provider),
+      )
+      if (matches.length === 0) {
+        const suffix = opts.provider ? ` under provider "${opts.provider}"` : ''
+        return fail(`unknown model "${id}"${suffix}`)
+      }
+      if (matches.length > 1) {
+        return fail(
+          `model "${id}" exists under multiple providers: ${matches.map((m) => m.providerId).join(', ')}; pass --provider`,
+        )
+      }
+
+      const model = matches[0]!
+      await apiFetch('POST', '/api/routing/model', {
+        id: model.id,
+        providerId: model.providerId,
+        label: model.label,
+        ...(model.api ? { api: model.api } : {}),
+        input: model.input,
+        ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
+        ...(typeof model.maxTokens === 'number' ? { maxTokens: model.maxTokens } : {}),
+        ...(model.cost ? { cost: model.cost } : {}),
+        ...(effort ? { reasoningEffort: effort } : {}),
+      })
+      logger.print(
+        `✓ model ${model.providerId}/${model.id} reasoning effort → ${effort ?? 'provider default'}`,
+      )
     }),
   )
 
@@ -562,4 +676,4 @@ export const routeCommand = new Command('route')
 
 // Mounted under `agentfw model` (see commands/model.ts) so there's one home
 // for "what models exist" separate from "where traffic goes".
-export { providerCmd, secretCmd, modelRm }
+export { providerCmd, secretCmd, modelRm, modelSet }

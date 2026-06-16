@@ -11,7 +11,7 @@ import type { ModelApi, ModelEntry, ProviderEntry } from '../../core/model-regis
 import { ensureDaemonRunning } from '../launch/daemon-autostart.ts'
 import { daemonFetch } from '../util/daemon-client.ts'
 import { confirmYesNo, promptChoice, promptSecret, promptText } from '../util/prompt.ts'
-import { modelRm, providerCmd, secretCmd } from './route.ts'
+import { modelRm, modelSet, providerCmd, secretCmd } from './route.ts'
 
 type ApiCompat = 'openai-chat' | 'openai-responses' | 'anthropic'
 
@@ -228,12 +228,16 @@ const listCmd = new Command('list')
         '/api/routing/registry',
       )
       logger.print('Providers:')
-      for (const p of reg.providers)
-        logger.print(`  ${p.id.padEnd(20)} ${p.api.padEnd(18)} ${p.baseUrl}`)
+      for (const p of reg.providers) {
+        const path = `path=${p.generationPath ?? 'versioned'}`
+        const effort = p.reasoningEffort ? ` effort=${p.reasoningEffort}` : ''
+        logger.print(`  ${p.id.padEnd(20)} ${p.api.padEnd(18)} ${path}${effort}  ${p.baseUrl}`)
+      }
       logger.print('Models:')
       for (const m of reg.models) {
+        const effort = m.reasoningEffort ? `  effort=${m.reasoningEffort}` : ''
         logger.print(
-          `  ${m.id.padEnd(28)} ${m.providerId}${m.input.includes('image') ? '  (vision)' : ''}`,
+          `  ${m.id.padEnd(28)} ${m.providerId}${m.input.includes('image') ? '  (vision)' : ''}${effort}`,
         )
       }
     } catch (e) {
@@ -247,5 +251,6 @@ export const modelCommand = new Command('model')
   .addCommand(addCmd)
   .addCommand(listCmd)
   .addCommand(modelRm)
+  .addCommand(modelSet)
   .addCommand(providerCmd)
   .addCommand(secretCmd)

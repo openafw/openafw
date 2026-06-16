@@ -6,10 +6,13 @@
 // in, but only ever gets back the set of refs that exist — never a value.
 
 import type { Context } from 'hono'
+import { readManifest } from '../../cli/backup/manifest.ts'
 import {
   type CombinationModel,
   type FusionEndpoint,
   type FusionMember,
+  GENERATION_PATH_MODES,
+  type GenerationPathMode,
   MAX_FUSION_PANEL,
   type Modality,
   type ModelApi,
@@ -17,6 +20,7 @@ import {
   type ModelEntry,
   type ProviderAuth,
   type ProviderEntry,
+  REASONING_EFFORTS,
   type ReasoningEffort,
   findCombo,
   findModel,
@@ -33,15 +37,13 @@ import {
   readRoutingPolicy,
 } from '../../core/routing-policy.ts'
 import { getSecret, readSecrets, removeSecret, secretRefs, setSecret } from '../../core/secrets.ts'
-import { readManifest } from '../../cli/backup/manifest.ts'
-import { activeProviderFor, readToolProviders, type ToolKind } from '../../core/tool-providers.ts'
+import { type ToolKind, activeProviderFor, readToolProviders } from '../../core/tool-providers.ts'
 import { clearBudgetCache } from '../orchestrator/budget.ts'
 import { getRoutes } from '../routes/load.ts'
 import { baselineInputTokens, recentModels } from '../store/models-queries.ts'
 
 const MODEL_APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-responses']
 const MODALITIES: Modality[] = ['text', 'audio', 'image', 'video', 'pdf']
-const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const ONE_DAY = 24 * 3_600_000
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -55,6 +57,22 @@ async function jsonBody(c: Context): Promise<Record<string, unknown> | null> {
   } catch {
     return null
   }
+}
+
+function normalizeReasoningEffort(raw: unknown): ReasoningEffort | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return REASONING_EFFORTS.includes(value as ReasoningEffort)
+    ? (value as ReasoningEffort)
+    : undefined
+}
+
+function normalizeGenerationPath(raw: unknown): GenerationPathMode | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return GENERATION_PATH_MODES.includes(value as GenerationPathMode)
+    ? (value as GenerationPathMode)
+    : undefined
 }
 
 // ── GET /api/routing/registry ─────────────────────────────────────
@@ -119,6 +137,17 @@ export async function handlePostProvider(c: Context): Promise<Response> {
   if (!MODEL_APIS.includes(api as ModelApi)) {
     return c.json({ error: `api must be one of ${MODEL_APIS.join(', ')}` }, 400)
   }
+  const reasoningEffort = normalizeReasoningEffort(body.reasoningEffort)
+  if (body.reasoningEffort != null && !reasoningEffort) {
+    return c.json({ error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}` }, 400)
+  }
+  const generationPath = normalizeGenerationPath(body.generationPath)
+  if (body.generationPath != null && !generationPath) {
+    return c.json(
+      { error: `generationPath must be one of ${GENERATION_PATH_MODES.join(', ')}` },
+      400,
+    )
+  }
 
   const reg0 = await readModelRegistry()
   const id =
@@ -152,10 +181,6 @@ export async function handlePostProvider(c: Context): Promise<Response> {
     return c.json({ error: 'authKind must be passthrough, bearer, or api-key' }, 400)
   }
 
-  const reasoningEffort = REASONING_EFFORTS.includes(body.reasoningEffort as ReasoningEffort)
-    ? (body.reasoningEffort as ReasoningEffort)
-    : undefined
-
   const provider: ProviderEntry = {
     id,
     label,
@@ -163,6 +188,7 @@ export async function handlePostProvider(c: Context): Promise<Response> {
     api: api as ModelApi,
     auth,
     origin: 'manual',
+    ...(generationPath ? { generationPath } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
   }
 
@@ -184,20 +210,20 @@ export async function handlePostProviderEffort(c: Context): Promise<Response> {
   const id = typeof body.id === 'string' ? body.id.trim() : ''
   if (!id) return c.json({ error: 'provider id required' }, 400)
   const raw = body.reasoningEffort
-  if (raw != null && !REASONING_EFFORTS.includes(raw as ReasoningEffort)) {
+  const effort = raw == null ? undefined : normalizeReasoningEffort(raw)
+  if (raw != null && !effort) {
     return c.json(
       { error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')} or null` },
       400,
     )
   }
-  const effort = raw == null ? undefined : (raw as ReasoningEffort)
   const reg = await mutateModelRegistry((r) => ({
     ...r,
     providers: r.providers.map((p) => {
       if (p.id !== id) return p
       const next: ProviderEntry = { ...p }
       if (effort) next.reasoningEffort = effort
-      else delete next.reasoningEffort
+      else next.reasoningEffort = undefined
       return next
     }),
   }))
@@ -254,6 +280,10 @@ export async function handlePostModel(c: Context): Promise<Response> {
   if (!findProvider(reg0, providerId)) {
     return c.json({ error: `unknown provider "${providerId}"` }, 400)
   }
+  const reasoningEffort = normalizeReasoningEffort(body.reasoningEffort)
+  if (body.reasoningEffort != null && !reasoningEffort) {
+    return c.json({ error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}` }, 400)
+  }
 
   const cost = normalizeCostInput(body.cost)
   const model: ModelEntry = {
@@ -265,6 +295,7 @@ export async function handlePostModel(c: Context): Promise<Response> {
     ...(typeof body.contextWindow === 'number' ? { contextWindow: body.contextWindow } : {}),
     ...(typeof body.maxTokens === 'number' ? { maxTokens: body.maxTokens } : {}),
     ...(cost ? { cost } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     origin: 'manual',
   }
 
@@ -722,7 +753,7 @@ export async function handlePostSubagent(c: Context): Promise<Response> {
   if (typeof body.providerId === 'string') {
     const pid = body.providerId.trim()
     if (pid) next.providerId = pid
-    else delete next.providerId
+    else next.providerId = undefined
   }
   if (typeof body.minMaxTokens === 'number' && body.minMaxTokens >= 0) {
     next.minMaxTokens = body.minMaxTokens
@@ -925,7 +956,7 @@ export async function handleDeleteCapability(c: Context): Promise<Response> {
     const capabilities = { ...prior.capabilities }
     delete capabilities[capabilityId as 'vision' | 'web_search']
     const next = { ...prior }
-    if (Object.keys(capabilities).length === 0) delete next.capabilities
+    if (Object.keys(capabilities).length === 0) next.capabilities = undefined
     else next.capabilities = capabilities
     return { ...p, agents: { ...p.agents, [routeKey]: next } }
   })

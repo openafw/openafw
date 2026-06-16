@@ -12,9 +12,9 @@
 //
 // Conventions:
 //   • Each adapt* function takes the upstream body about to be POSTed and
-//     mutates it in place. The provider passes its `reasoningEffort` knob
-//     (set in the Providers UI) so a single user setting can drive both
-//     codex's `reasoning.effort` and claude-code's thinking budget.
+//     mutates it in place. The caller passes the effective `reasoningEffort`
+//     knob so a model-level override can drive both OpenAI Responses
+//     `reasoning.effort` and claude-code's thinking budget.
 //   • Predicates are URL-pattern matches; the host of an OAuth route is
 //     pinned by the credential flow, so URL is a reliable discriminator.
 //   • Defaults baked here mirror what each first-party CLI sends.
@@ -82,7 +82,7 @@ export function adaptForCodexBackend(
   reasoningEffort: ReasoningEffort | undefined,
 ): void {
   body.store = false
-  delete body.max_output_tokens
+  body.max_output_tokens = undefined
 
   const effort = EFFORT_TO_CODEX[reasoningEffort ?? 'medium']
   // Merge so a caller-supplied reasoning summary setting is preserved.
@@ -136,6 +136,25 @@ export function adaptForCodexBackend(
     ]
   }
   body.instructions = CODEX_IDENTITY_INSTRUCTIONS
+}
+
+/** Apply the public/OpenAI-compatible Responses reasoning knob without
+ *  clobbering an explicit client-supplied `reasoning.effort`. Unlike the
+ *  codex ChatGPT backend adapter, this does not clamp `xhigh`; third-party
+ *  Responses-compatible gateways may support it even when OpenAI's public API
+ *  does not. */
+export function applyOpenAIResponsesReasoning(
+  body: Record<string, unknown>,
+  reasoningEffort: ReasoningEffort | undefined,
+): boolean {
+  if (!reasoningEffort) return false
+  const existing =
+    typeof body.reasoning === 'object' && body.reasoning !== null
+      ? (body.reasoning as Record<string, unknown>)
+      : {}
+  if ('effort' in existing) return false
+  body.reasoning = { ...existing, effort: reasoningEffort }
+  return true
 }
 
 // ── anthropic claude-code subscription ────────────────────────────
@@ -226,10 +245,7 @@ export function adaptForClaudeCodeOAuth(
   // Inject the reasoning-effort thinking budget when the client didn't
   // already specify one — same as before this adapter took on the
   // system-lift responsibility.
-  if (
-    reasoningEffort &&
-    (!('thinking' in body) || body.thinking == null)
-  ) {
+  if (reasoningEffort && (!('thinking' in body) || body.thinking == null)) {
     body.thinking = {
       type: 'enabled',
       budget_tokens: EFFORT_TO_THINKING_BUDGET[reasoningEffort],

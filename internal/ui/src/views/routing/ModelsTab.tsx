@@ -9,13 +9,30 @@ import {
   saveModel,
   saveProvider,
 } from '../../api'
-import type { Modality, ModelApi, ProviderEntry, Registry } from '../../types'
+import type {
+  GenerationPathMode,
+  Modality,
+  ModelApi,
+  ProviderEntry,
+  ReasoningEffort,
+  Registry,
+} from '../../types'
 
 const APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-responses']
 const AUTH_KINDS = ['passthrough', 'bearer', 'api-key'] as const
 const MODALITIES: Modality[] = ['text', 'image', 'pdf', 'audio', 'video']
+const GENERATION_PATHS: { value: GenerationPathMode; label: string }[] = [
+  { value: 'versioned', label: 'versioned (/v1/...)' },
+  { value: 'direct', label: 'direct (/...)' },
+]
+const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
 
-type ProviderForm = ProviderInput
+type ReasoningEffortChoice = ReasoningEffort | ''
+type ProviderForm = Omit<ProviderInput, 'api' | 'generationPath' | 'reasoningEffort'> & {
+  api: ModelApi
+  generationPath: GenerationPathMode
+  reasoningEffort: ReasoningEffortChoice
+}
 const EMPTY_PROVIDER: ProviderForm = {
   name: '',
   baseUrl: '',
@@ -23,13 +40,27 @@ const EMPTY_PROVIDER: ProviderForm = {
   authKind: 'bearer',
   authHeader: 'x-api-key',
   apiKey: '',
+  generationPath: 'versioned',
+  reasoningEffort: '',
 }
 
 // contextWindow 0 = unset (the common case — agentfw only needs it for the rare
 // model whose real window is smaller than what the agent asks for, to clamp the
 // output budget).
-type ModelDraft = { id: string; input: Modality[]; window: number; showWindow: boolean }
-const EMPTY_DRAFT: ModelDraft = { id: '', input: ['text'], window: 0, showWindow: false }
+type ModelDraft = {
+  id: string
+  input: Modality[]
+  window: number
+  showWindow: boolean
+  reasoningEffort: ReasoningEffortChoice
+}
+const EMPTY_DRAFT: ModelDraft = {
+  id: '',
+  input: ['text'],
+  window: 0,
+  showWindow: false,
+  reasoningEffort: '',
+}
 
 const providerName = (p: ProviderEntry): string => p.label || p.id
 
@@ -104,10 +135,12 @@ export function ModelsTab() {
       name: providerName(p),
       id: p.id,
       baseUrl: p.baseUrl,
-      api: p.api,
+      api: p.api as ModelApi,
       authKind: (p.auth?.kind as ProviderForm['authKind']) ?? 'bearer',
       authHeader: p.auth?.header ?? 'x-api-key',
       apiKey: '',
+      generationPath: p.generationPath ?? 'versioned',
+      reasoningEffort: p.reasoningEffort ?? '',
     })
   }
 
@@ -121,10 +154,15 @@ export function ModelsTab() {
     void (async () => {
       try {
         await saveProvider({
-          ...prov,
+          name,
           ...(editingProvider ? { id: editingProvider } : {}),
-          ...(prov.authKind === 'api-key' ? {} : { authHeader: undefined }),
-          ...(prov.authKind === 'passthrough' ? { apiKey: undefined } : {}),
+          baseUrl: prov.baseUrl.trim(),
+          api: prov.api,
+          authKind: prov.authKind,
+          ...(prov.authKind === 'api-key' ? { authHeader: prov.authHeader } : {}),
+          ...(prov.authKind !== 'passthrough' ? { apiKey: prov.apiKey } : {}),
+          ...(prov.generationPath === 'direct' ? { generationPath: prov.generationPath } : {}),
+          ...(prov.reasoningEffort ? { reasoningEffort: prov.reasoningEffort } : {}),
         })
         const reg = await fetchRegistry()
         setRegistry(reg)
@@ -184,13 +222,19 @@ export function ModelsTab() {
       return { ...d, input: next.length ? next : ['text'] }
     })
 
-  const editModel = (m: { id: string; input?: string[]; contextWindow?: number }) => {
+  const editModel = (m: {
+    id: string
+    input?: string[]
+    contextWindow?: number
+    reasoningEffort?: ReasoningEffort
+  }) => {
     setEditingModel(m.id)
     setDraft({
       id: m.id,
       input: (m.input as Modality[] | undefined)?.length ? (m.input as Modality[]) : ['text'],
       window: m.contextWindow ?? 0,
       showWindow: !!m.contextWindow,
+      reasoningEffort: m.reasoningEffort ?? '',
     })
     modelNameRef.current?.focus()
   }
@@ -201,12 +245,13 @@ export function ModelsTab() {
     void run(async () => {
       await saveModel({
         id,
+        ...(editingModel && editingModel !== id ? { previousId: editingModel } : {}),
         providerId,
         label: id,
         input: draft.input,
         ...(draft.window > 0 ? { contextWindow: draft.window } : {}),
+        ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       })
-      if (editingModel && editingModel !== id) await removeModel(editingModel, providerId)
       setDraft(EMPTY_DRAFT)
       setEditingModel(null)
       modelNameRef.current?.focus()
@@ -254,6 +299,7 @@ export function ModelsTab() {
                   <th>Model</th>
                   <th>Modalities</th>
                   <th>Window</th>
+                  <th>Effort</th>
                   <th />
                 </tr>
               </thead>
@@ -265,6 +311,15 @@ export function ModelsTab() {
                     </td>
                     <td>{(m.input ?? ['text']).join(', ')}</td>
                     <td>{m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : '—'}</td>
+                    <td>
+                      {m.reasoningEffort ?? (
+                        <span className="dim">
+                          {provider.reasoningEffort
+                            ? `provider ${provider.reasoningEffort}`
+                            : 'default'}
+                        </span>
+                      )}
+                    </td>
                     <td className="row-actions">
                       <button
                         type="button"
@@ -390,6 +445,23 @@ export function ModelsTab() {
                 + context window
               </button>
             )}
+            <select
+              title="Model reasoning effort"
+              value={draft.reasoningEffort}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  reasoningEffort: e.target.value as ReasoningEffortChoice,
+                })
+              }
+            >
+              <option value="">provider default effort</option>
+              {REASONING_EFFORTS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
             <button type="submit" disabled={busy}>
               {editingModel ? 'save model' : 'add model'}
             </button>
@@ -459,8 +531,10 @@ export function ModelsTab() {
               <tr>
                 <th>Name</th>
                 <th>API</th>
+                <th>Endpoint</th>
                 <th>Auth</th>
                 <th>Base URL</th>
+                <th>Effort</th>
                 <th>Models</th>
                 <th />
               </tr>
@@ -479,10 +553,12 @@ export function ModelsTab() {
                       ) : null}
                     </td>
                     <td>{p.api}</td>
+                    <td>{p.generationPath ?? 'versioned'}</td>
                     <td>{p.auth?.kind ?? '—'}</td>
                     <td>
                       <code className="path">{p.baseUrl}</code>
                     </td>
+                    <td>{p.reasoningEffort ?? <span className="dim">default</span>}</td>
                     <td>
                       {count === 0 ? (
                         <span className="dim" title="this provider has no models yet">
@@ -536,10 +612,26 @@ export function ModelsTab() {
             value={prov.baseUrl}
             onChange={(e) => setProv({ ...prov, baseUrl: e.target.value })}
           />
-          <select value={prov.api} onChange={(e) => setProv({ ...prov, api: e.target.value })}>
+          <select
+            value={prov.api}
+            onChange={(e) => setProv({ ...prov, api: e.target.value as ModelApi })}
+          >
             {APIS.map((a) => (
               <option key={a} value={a}>
                 {a}
+              </option>
+            ))}
+          </select>
+          <select
+            title="Generation endpoint path"
+            value={prov.generationPath}
+            onChange={(e) =>
+              setProv({ ...prov, generationPath: e.target.value as GenerationPathMode })
+            }
+          >
+            {GENERATION_PATHS.map((path) => (
+              <option key={path.value} value={path.value}>
+                {path.label}
               </option>
             ))}
           </select>
@@ -570,6 +662,23 @@ export function ModelsTab() {
               onChange={(e) => setProv({ ...prov, apiKey: e.target.value })}
             />
           )}
+          <select
+            title="Provider default reasoning effort"
+            value={prov.reasoningEffort}
+            onChange={(e) =>
+              setProv({
+                ...prov,
+                reasoningEffort: e.target.value as ReasoningEffortChoice,
+              })
+            }
+          >
+            <option value="">default effort</option>
+            {REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
+              </option>
+            ))}
+          </select>
           <button type="submit" disabled={busy}>
             {editingProvider ? 'save changes' : 'add provider → models'}
           </button>

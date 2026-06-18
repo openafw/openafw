@@ -7,7 +7,6 @@ import { paths } from '../../core/paths.ts'
 import { atomicWrite, backupCopy, fileExists, sha256OfString } from '../backup/files.ts'
 import { revertEntries } from '../backup/restore.ts'
 import { applyJsonUpdate, getValueAt, parseJsonc, parseTree } from '../rewrite/jsonc.ts'
-import { decoderFor } from '../wire/decoder-for.ts'
 import { agentfwUrlFor } from '../wire/url.ts'
 import { buildWireSecrets, captureClaudeCodeCredentials } from './credentials.ts'
 import {
@@ -29,6 +28,10 @@ import type {
 
 const AGENT: AgentId = 'claude-code'
 const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
+
+export function decoderForClaudeCodeBaseUrl(_upstream: string): 'anthropic' {
+  return 'anthropic'
+}
 
 type ClaudeSettings = {
   env?: Record<string, string>
@@ -73,7 +76,7 @@ export const claudeCodeDetector: Detector = {
         originalBaseUrl: currentBaseUrl,
         agentfwBaseUrl,
         upstream,
-        decoder: decoderFor(upstream),
+        decoder: decoderForClaudeCodeBaseUrl(upstream),
         configLocation: '/env/ANTHROPIC_BASE_URL',
         filePath: settingsPath,
         active: true,

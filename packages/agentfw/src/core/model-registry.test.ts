@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  type ModelEntry,
+  type ModelRegistry,
+  type ProviderEntry,
   findModel,
   findProvider,
   isVision,
-  type ModelEntry,
-  type ModelRegistry,
   normalizeModelRegistry,
-  type ProviderEntry,
   resolveApi,
 } from './model-registry.ts'
 
@@ -53,7 +53,10 @@ describe('normalizeModelRegistry', () => {
             { modelId: 'gpt-5.5' },
             {
               modelId: 'coder-x',
-              switchOn: [{ kind: 'tokens', tokenLimit: 1_000_000, period: 'day' }, { kind: 'error' }],
+              switchOn: [
+                { kind: 'tokens', tokenLimit: 1_000_000, period: 'day' },
+                { kind: 'error' },
+              ],
               fallback: { modelId: 'gpt-5.5' },
             },
           ],
@@ -94,10 +97,7 @@ describe('normalizeModelRegistry', () => {
         {
           id: 'c1',
           label: 'legacy',
-          members: [
-            { modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] },
-            { modelId: 'claude-x' },
-          ],
+          members: [{ modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] }, { modelId: 'claude-x' }],
           capabilities: {
             vision: { via: 'companion', modelId: 'vision-mini' },
             web_search: { via: 'local', providerId: 'ddg' },
@@ -108,10 +108,7 @@ describe('normalizeModelRegistry', () => {
     expect(out.combos[0]).toEqual({
       id: 'c1',
       label: 'legacy',
-      panel: [
-        { modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] },
-        { modelId: 'claude-x' },
-      ],
+      panel: [{ modelId: 'gpt-5.5', switchOn: [{ kind: 'error' }] }, { modelId: 'claude-x' }],
       vision: { modelId: 'vision-mini' },
       webSearch: { providerId: 'ddg' },
       origin: 'manual',
@@ -172,6 +169,26 @@ describe('normalizeModelRegistry', () => {
     })
     expect(reg.models[0]?.cost).toEqual({ input: 1, output: 2 })
     expect(reg.models[1]?.cost).toBeUndefined()
+  })
+
+  it('preserves provider generation paths and model reasoning effort overrides', () => {
+    const reg = normalizeModelRegistry({
+      version: 3,
+      providers: [
+        {
+          ...provider,
+          api: 'openai-responses',
+          generationPath: 'direct',
+          reasoningEffort: 'high',
+        },
+      ],
+      models: [{ ...model, reasoningEffort: 'xhigh' }],
+      combos: [],
+    })
+
+    expect(reg.providers[0]?.generationPath).toBe('direct')
+    expect(reg.providers[0]?.reasoningEffort).toBe('high')
+    expect(reg.models[0]?.reasoningEffort).toBe('xhigh')
   })
 })
 

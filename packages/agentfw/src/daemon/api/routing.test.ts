@@ -58,9 +58,7 @@ describe('modelsUrl', () => {
 
   it('strips trailing slashes', () => {
     expect(modelsUrl('https://api.example.com/')).toBe('https://api.example.com/v1/models')
-    expect(modelsUrl('https://api.example.com/v1/')).toBe(
-      'https://api.example.com/v1/models',
-    )
+    expect(modelsUrl('https://api.example.com/v1/')).toBe('https://api.example.com/v1/models')
   })
 })
 

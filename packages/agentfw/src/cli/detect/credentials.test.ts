@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DecoderKind } from '../../core/routes.ts'
+import { decoderForClaudeCodeBaseUrl } from './claude-code.ts'
 import {
   buildWireSecrets,
   captureClaudeCodeCredentials,
@@ -100,7 +101,10 @@ describe('buildWireSecrets', () => {
     ])
     const secrets = buildWireSecrets(
       'hermes',
-      [ep('openai', '/model/base_url'), ep('groq', '/custom_providers/groq/base_url', 'openai-chat', false)],
+      [
+        ep('openai', '/model/base_url'),
+        ep('groq', '/custom_providers/groq/base_url', 'openai-chat', false),
+      ],
       captured,
     )
     expect(secrets).toEqual([{ ref: 'provider:hermes/openai', value: 'sk-active' }])
@@ -159,6 +163,14 @@ describe('captureClaudeCodeCredentials', () => {
     expect(out.get('anthropic')).toEqual({
       auth: { kind: 'agent-oauth', agent: 'claude-code' },
     })
+  })
+})
+
+describe('decoderForClaudeCodeBaseUrl', () => {
+  it('always uses the Anthropic Messages decoder for Claude Code base URLs', () => {
+    expect(decoderForClaudeCodeBaseUrl('https://api.anthropic.com')).toBe('anthropic')
+    expect(decoderForClaudeCodeBaseUrl('https://cc-vibe.com')).toBe('anthropic')
+    expect(decoderForClaudeCodeBaseUrl('https://relay.example/v1')).toBe('anthropic')
   })
 })
 

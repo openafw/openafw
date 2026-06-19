@@ -3,7 +3,7 @@
 afw is local-first. Everything you capture stays on your own
 machine under `~/.afw/`. The published package does **not** collect
 telemetry, does **not** report crashes, and does **not** send any data
-**about you or your usage** anywhere. There is no `openguardrails.com` /
+**about you or your usage** anywhere. There is no `openafw.com` /
 afw / Anthropic host wired into the package.
 
 From v0.4 the daemon makes one outbound request of its own: a daily
@@ -102,7 +102,7 @@ refreshes it:
 * **What it sends:** your `refresh_token` and the agent's public
   `client_id`. Nothing else — no machine ID, no usage data, nothing
   identifying you beyond the token the agent already holds.
-* **Where it does NOT go:** not `openguardrails.com`, not any afw server.
+* **Where it does NOT go:** not `openafw.com`, not any afw server.
   We never see this request.
 * **When:** only when you have opted a route onto a managed
   subscription provider *and* its token is near expiry. A passthrough
@@ -175,7 +175,7 @@ to stay fresh without upgrading afw, you can turn on a daily refresh.
 * **What it sends:** nothing about you. No user data, no machine ID, no
   model ids you've used, no usage data — just an anonymous GET for the
   public catalog.
-* **Where it does NOT go:** not `openguardrails.com`, not any afw or
+* **Where it does NOT go:** not `openafw.com`, not any afw or
   Anthropic server, never your captured traffic. We never see this request.
 * The result is cached at `~/.afw/pricing-catalog.json` and read locally;
   nothing leaves your machine.
@@ -204,7 +204,7 @@ captures with Claude Code's own local transcripts.
   response) and records the session id + sub-agent id locally.
 * **What it sends:** nothing. No network calls at all. This is a local file
   read; results are written only to your local trace DB. It never contacts
-  `openguardrails.com`, Anthropic, or any host.
+  `openafw.com`, Anthropic, or any host.
 * Reads stop working gracefully when the files are absent (e.g. the daemon and
   agent run on different machines) — calls simply stay unattributed.
 
@@ -230,7 +230,7 @@ published:
   user data, no machine ID, no install ID, no usage data, no header
   that identifies you. The registry sees an anonymous GET, exactly
   like `npm view openafw version`.
-* **Where it does NOT go:** not `openguardrails.com`, not any afw or
+* **Where it does NOT go:** not `openafw.com`, not any afw or
   Anthropic server. We never see this request.
 * **On by default**, because it carries nothing about you. Turn it
   off completely with `updateCheck: false` in `~/.afw/config.json`
@@ -303,7 +303,7 @@ disk for `afw list / show / report`.
 
 **Where afw does NOT send data:**
 
-* No `openguardrails.com` host. No `*.openguardrails.com` calls anywhere in
+* No `openafw.com` host. No `*.openafw.com` calls anywhere in
   the source. Grep `packages/afw/src/` to confirm.
 * No telemetry endpoint, anonymous or otherwise.
 * No auto-update check (`npm update -g openafw` is something

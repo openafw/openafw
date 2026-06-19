@@ -226,8 +226,8 @@ function stripClientAuth(headers: Headers): void {
 // suffix mirrors codex/claude-code's own format so the request looks
 // reasonable in their server logs. Bumping versions is harmless — the
 // upstream only checks the prefix and (loosely) the shape.
-const CODEX_CLIENT_UA = 'codex_cli_rs/0.81.0 (afw; openguardrails.com)'
-const CLAUDE_CODE_CLIENT_UA = 'claude-cli/2.0.0 (afw; openguardrails.com)'
+const CODEX_CLIENT_UA = 'codex_cli_rs/0.81.0 (afw; openafw.com)'
+const CLAUDE_CODE_CLIENT_UA = 'claude-cli/2.0.0 (afw; openafw.com)'
 
 function encodeJson(value: unknown): ArrayBuffer {
   const bytes = new TextEncoder().encode(JSON.stringify(value))

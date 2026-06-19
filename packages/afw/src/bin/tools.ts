@@ -13,7 +13,7 @@
 //
 // Privacy: this binary makes outbound calls to the user-chosen
 // backend (DuckDuckGo HTML, Brave API, SearXNG, Tavily). It does NOT
-// contact any openguardrails.com or Anthropic host. Within PRIVACY.md.
+// contact any openafw.com or Anthropic host. Within PRIVACY.md.
 
 import process from 'node:process'
 import { getSecret, readSecrets } from '../core/secrets.ts'

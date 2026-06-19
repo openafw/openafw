@@ -174,7 +174,7 @@ async function runVariant(
       'content-type': 'application/json',
       accept: 'text/event-stream',
       originator: 'codex_cli_rs',
-      'user-agent': 'codex_cli_rs/0.81.0 (afw; openguardrails.com)',
+      'user-agent': 'codex_cli_rs/0.81.0 (afw; openafw.com)',
     },
     body: JSON.stringify(body),
   })

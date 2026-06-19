@@ -30,7 +30,7 @@ export type FetchSuccess = {
 export type FetchFailure = { ok: false; error: string }
 export type FetchOutcome = FetchSuccess | FetchFailure
 
-const FETCH_USER_AGENT = 'afw-tools/0.1 (+https://openguardrails.com)'
+const FETCH_USER_AGENT = 'afw-tools/0.1 (+https://openafw.com)'
 const DEFAULT_MAX_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 15_000
 

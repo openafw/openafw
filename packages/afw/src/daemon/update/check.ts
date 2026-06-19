@@ -8,7 +8,7 @@ import { VERSION } from '../../core/version.ts'
 // The only network endpoint this feature touches: the public npm registry.
 // The request carries the package name (in the URL) and nothing else — no
 // user data, no identifiers, and never one of our own servers.
-const REGISTRY_URL = 'https://registry.npmjs.org/openafw/latest'
+const REGISTRY_URL = 'https://registry.npmjs.org/@openafw%2Fopenafw/latest'
 
 export type UpdateState = {
   currentVersion: string

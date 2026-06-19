@@ -67,7 +67,7 @@ command-tampering / supply-chain checks are roadmap.
 | Project / brand | afw (by OpenGuardrails) |
 | GitHub repo | `openafw/openafw` |
 | npm scope | `@openguardrails` |
-| npm package | `openafw` |
+| npm package | `@openafw/openafw` |
 | Main binary | `afw` |
 | MCP stdio wrapper bin | `afw-tap` |
 | MCP tools server bin | `afw-tools` |
@@ -99,7 +99,7 @@ afw/                       (repo: openafw/openafw)
 ├── .strategy/                 (PRIVATE, gitignored — STALE cost-saver design)
 ├── references/                (third-party projects studied — gitignored)
 │   └── openthomas/            (frozen pre-fork tree; port reference, do not import)
-└── packages/afw/          (the npm package: openafw)
+└── packages/afw/          (the npm package: @openafw/openafw)
     └── src/
         ├── bin/               (afw, tap, tools entrypoints)
         ├── core/              (config, paths, packet, routing-policy, …)
@@ -216,7 +216,7 @@ never refactor them.
   (optional) browser UI.
 - Switch the published artifact's runtime to Bun. The npm package must run
   on stock Node.
-- Rename the npm package away from `openafw` or the binaries
+- Rename the npm package away from `@openafw/openafw` or the binaries
   away from `afw` / `afw-tap` / `afw-tools` — they are the
   user-facing contract.
 - Import from `references/` (including `references/openthomas/`).

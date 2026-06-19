@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `openafw`. The format follows
+All notable changes to `@openafw/openafw`. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; dates are
 local to where the release was cut.
 

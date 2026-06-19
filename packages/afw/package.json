@@ -1,5 +1,5 @@
 {
-  "name": "openafw",
+  "name": "@openafw/openafw",
   "version": "0.5.2",
   "description": "The local firewall for AI agents: route and repair them, and keep your secrets off the model, the API relay, and the supply chain. Local credential masking, per-route model routing, and security detectors on the wire. Free and fully open source.",
   "license": "MIT",
@@ -14,6 +14,9 @@
     "afw": "dist/bin/afw.js",
     "afw-tap": "dist/bin/tap.js",
     "afw-tools": "dist/bin/tools.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",

@@ -1,6 +1,6 @@
 # CLI
 
-The `afw` binary, installed by `npm install -g openafw`.
+The `afw` binary, installed by `npm install -g @openafw/openafw`.
 
 The first time you run `afw` it walks first-run setup: register a model
 provider, map afw's three model names to your models, then mint an API key

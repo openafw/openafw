@@ -2,7 +2,7 @@
   "name": "afw-monorepo",
   "private": true,
   "version": "0.0.0",
-  "description": "afw — an AI agent firewall on the wire (monorepo root; the published package is openafw under packages/afw).",
+  "description": "afw — an AI agent firewall on the wire (monorepo root; the published package is @openafw/openafw under packages/afw).",
   "license": "MIT",
   "type": "module",
   "workspaces": ["packages/*", "internal/ui"],
@@ -10,13 +10,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "afw": "npm run afw -w openafw --",
-    "daemon": "npm run daemon -w openafw --",
+    "afw": "npm run afw -w @openafw/openafw --",
+    "daemon": "npm run daemon -w @openafw/openafw --",
     "ui:dev": "npm run dev -w @openguardrails/ui",
     "ui:build": "npm run build -w @openguardrails/ui",
-    "build": "npm run ui:build && npm run build -w openafw",
-    "typecheck": "npm run typecheck -w openafw",
-    "test": "npm run test -w openafw",
+    "build": "npm run ui:build && npm run build -w @openafw/openafw",
+    "typecheck": "npm run typecheck -w @openafw/openafw",
+    "test": "npm run test -w @openafw/openafw",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check ."

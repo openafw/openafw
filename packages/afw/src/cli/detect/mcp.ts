@@ -47,7 +47,7 @@ export function tapInvocation(opts: { agent: AgentId; server: string }): {
     }
   }
 
-  // Production: npm install -g openafw puts afw-tap on $PATH
+  // Production: npm install -g @openafw/openafw puts afw-tap on $PATH
   return { command: 'afw-tap', args: wrapArgs }
 }
 

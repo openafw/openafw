@@ -9,7 +9,7 @@ import { npmInstallGlobal } from './npm.ts'
 import { patchProgress, writeProgress } from './progress.ts'
 import { waitForQuiet } from './restart.ts'
 
-const PKG = 'openafw'
+const PKG = '@openafw/openafw'
 
 /**
  * Apply an update, end to end. Runs inside the daemon:

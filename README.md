@@ -101,7 +101,7 @@ tool-allowlist policies.
 ## Quick start
 
 ```bash
-npm install -g openafw
+npm install -g @openafw/openafw
 
 # CLI agents — launch them through afw (this instance only, no global change):
 afw claude            # or: afw codex

@@ -2,7 +2,7 @@ import { logger } from '../../core/logger.ts'
 import { writeRestoreMarker } from './backup.ts'
 import { npmInstallGlobal } from './npm.ts'
 
-const PKG = 'openafw'
+const PKG = '@openafw/openafw'
 
 /**
  * Revert to a prior version: reinstall it from the npm registry and queue the

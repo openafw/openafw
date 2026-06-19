@@ -57,7 +57,7 @@ jobs:
         working-directory: packages/afw
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "openafw@$VERSION" version 2>/dev/null; then
+          if npm view "@openafw/openafw@$VERSION" version 2>/dev/null; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version $VERSION already on npm — skipping publish step"
           else

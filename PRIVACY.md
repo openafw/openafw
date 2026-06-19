@@ -223,13 +223,13 @@ The daemon checks once a day whether a newer afw has been
 published:
 
 * **Request:** a plain HTTPS `GET` to
-  `https://registry.npmjs.org/openafw/latest` — the public
+  `https://registry.npmjs.org/@openafw%2Fopenafw/latest` — the public
   npm registry, the same one `npm install` used to put afw on your
   machine.
 * **What it sends:** the package name, in the URL. Nothing else. No
   user data, no machine ID, no install ID, no usage data, no header
   that identifies you. The registry sees an anonymous GET, exactly
-  like `npm view openafw version`.
+  like `npm view @openafw/openafw version`.
 * **Where it does NOT go:** not `openafw.com`, not any afw or
   Anthropic server. We never see this request.
 * **On by default**, because it carries nothing about you. Turn it
@@ -241,7 +241,7 @@ published:
 ### Installing an update
 
 `afw update`, or "Update now" in the dashboard, runs
-`npm install -g openafw@<version>` — exactly what you would
+`npm install -g @openafw/openafw@<version>` — exactly what you would
 run by hand. Before installing, afw snapshots your trace database
 into `~/.afw/backups/`. After installing it restarts the daemon
 (waiting for a quiet moment so no in-flight agent call is dropped) and
@@ -306,7 +306,7 @@ disk for `afw list / show / report`.
 * No `openafw.com` host. No `*.openafw.com` calls anywhere in
   the source. Grep `packages/afw/src/` to confirm.
 * No telemetry endpoint, anonymous or otherwise.
-* No auto-update check (`npm update -g openafw` is something
+* No auto-update check (`npm update -g @openafw/openafw` is something
   you run manually).
 * No error / crash reporting.
 * No license-check ping (no license system exists in v0.1).

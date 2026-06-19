@@ -159,6 +159,8 @@ export type ProviderEntry = {
   api: string
   authKind?: string
   auth?: { kind: string; header?: string }
+  reasoningEffort?: ReasoningEffort
+  generationPath?: GenerationPathMode
   origin?: string
 }
 
@@ -172,12 +174,17 @@ export type ModelEntry = {
   /** Total context window (input + output) in tokens. Drives the output-budget
    *  clamp so a request the agent sized for a larger window fits this model. */
   contextWindow?: number
+  reasoningEffort?: ReasoningEffort
   origin?: string
 }
 
 export type Modality = 'text' | 'image' | 'pdf' | 'audio' | 'video'
 
 export type ModelApi = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
+
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+export type GenerationPathMode = 'versioned' | 'direct'
 
 // A rule that advances a chain member to the next on failure. The UI only
 // authors `error` failover; budget/token rules stay CLI/advanced but are

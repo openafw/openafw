@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderEntry } from '../../core/model-registry.ts'
 import {
+  applyOpenAIResponsesReasoningBytes,
   clampOutputBudget,
   clampOutputBudgetBytes,
   clarifyUpstreamError,
@@ -8,6 +9,7 @@ import {
   generationUrl,
   isAnthropicNative,
   isGenerationPath,
+  isTransientUpstreamStatus,
   parseOverflowNumbers,
   rewriteModel,
   safeRetryBudget,
@@ -90,6 +92,15 @@ describe('generationUrl', () => {
     expect(generationUrl('https://chatgpt.com/backend-api/codex/', 'openai-responses')).toBe(
       'https://chatgpt.com/backend-api/codex/responses',
     )
+  })
+
+  it('supports provider direct generation paths without /v1', () => {
+    expect(
+      generationUrl('https://w.ciykj.cn', 'openai-responses', { generationPath: 'direct' }),
+    ).toBe('https://w.ciykj.cn/responses')
+    expect(
+      generationUrl('https://gateway.example/', 'openai-chat', { generationPath: 'direct' }),
+    ).toBe('https://gateway.example/chat/completions')
   })
 })
 
@@ -275,6 +286,37 @@ describe('clampOutputBudgetBytes', () => {
   it('returns the same buffer for an unparseable body', () => {
     const body = encode('not json{')
     expect(clampOutputBudgetBytes(body, 'anthropic-messages', { id: 'm', maxTokens: 8 })).toBe(body)
+  })
+})
+
+describe('applyOpenAIResponsesReasoningBytes', () => {
+  it('injects configured OpenAI Responses effort without clamping xhigh', () => {
+    const out = applyOpenAIResponsesReasoningBytes(encode({ model: 'm', input: 'hi' }), 'xhigh')
+    expect(decode(out)).toEqual({ model: 'm', input: 'hi', reasoning: { effort: 'xhigh' } })
+  })
+
+  it('preserves an explicit client effort', () => {
+    const out = applyOpenAIResponsesReasoningBytes(
+      encode({ model: 'm', reasoning: { effort: 'low', summary: 'auto' } }),
+      'xhigh',
+    )
+    expect(decode(out)).toEqual({
+      model: 'm',
+      reasoning: { effort: 'low', summary: 'auto' },
+    })
+  })
+})
+
+describe('isTransientUpstreamStatus', () => {
+  it('recognizes retryable upstream statuses', () => {
+    expect(isTransientUpstreamStatus(408)).toBe(true)
+    expect(isTransientUpstreamStatus(429)).toBe(true)
+    expect(isTransientUpstreamStatus(503)).toBe(true)
+  })
+
+  it('does not retry ordinary client errors', () => {
+    expect(isTransientUpstreamStatus(400)).toBe(false)
+    expect(isTransientUpstreamStatus(404)).toBe(false)
   })
 })
 

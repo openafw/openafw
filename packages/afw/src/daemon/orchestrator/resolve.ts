@@ -14,6 +14,7 @@ import {
   type ModelApi,
   type ModelEntry,
   type ProviderEntry,
+  type ReasoningEffort,
   findCombo,
   findModel,
   findProvider,
@@ -38,6 +39,8 @@ export type ResolvedMember = {
   provider: ProviderEntry
   api: ModelApi
   switchOn: SwitchRule[]
+  /** Effective reasoning effort: model override, then provider default. */
+  reasoningEffort?: ReasoningEffort
 }
 
 /** A capability fulfillment resolved against the registry. The
@@ -67,6 +70,8 @@ export type ResolvedRoute =
       provider: ProviderEntry
       /** The target model's wire format — may differ from clientApi. */
       api: ModelApi
+      /** Effective reasoning effort: model override, then provider default. */
+      reasoningEffort?: ReasoningEffort
       capabilities: ResolvedCapabilities
       configuredTarget: { kind: 'model'; id: string }
       /** Set when this route is a subagent cost-saver downgrade — the model
@@ -114,7 +119,13 @@ export function decoderToApi(decoder: DecoderKind): ModelApi | undefined {
   return undefined
 }
 
-export type ModelRef = { model: ModelEntry; provider: ProviderEntry; api: ModelApi }
+export type ModelRef = {
+  model: ModelEntry
+  provider: ProviderEntry
+  api: ModelApi
+  /** Effective reasoning effort: model override, then provider default. */
+  reasoningEffort?: ReasoningEffort
+}
 
 /** A seeded provider's managed auth points at a secret in secrets.json. If
  *  that secret is absent — never captured, or rotated out-of-band — fall
@@ -147,7 +158,14 @@ export function resolveModelRef(modelId: string, providerId?: string): ModelRef 
   if (!provider) return undefined
   const api = resolveApi(reg, model)
   if (!api) return undefined
-  return { model, provider: withResolvableAuth(provider), api }
+  const resolvedProvider = withResolvableAuth(provider)
+  const reasoningEffort = model.reasoningEffort ?? resolvedProvider.reasoningEffort
+  return {
+    model,
+    provider: resolvedProvider,
+    api,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+  }
 }
 
 /** Resolve a routeKey against the live routing policy. */
@@ -215,6 +233,7 @@ export function resolveRouteFrom(
       model: only.model,
       provider: only.provider,
       api: only.api,
+      ...(only.reasoningEffort ? { reasoningEffort: only.reasoningEffort } : {}),
       capabilities,
       configuredTarget: { kind: 'model', id: only.model.id },
     }
@@ -272,8 +291,7 @@ function resolveFusion(
     vision = resolveModelRef(combo.vision.modelId, combo.vision.providerId)
     if (!vision)
       logger.warn(
-        `routing: ${routeKey} fusion vision companion "${combo.vision.modelId}" unresolvable, ` +
-          'images will be dropped for text-only panel members',
+        `routing: ${routeKey} fusion vision companion "${combo.vision.modelId}" unresolvable, images will be dropped for text-only panel members`,
       )
   }
 
@@ -282,6 +300,7 @@ function resolveFusion(
     model: firstPrimary.model,
     provider: firstPrimary.provider,
     api: firstPrimary.api,
+    ...(firstPrimary.reasoningEffort ? { reasoningEffort: firstPrimary.reasoningEffort } : {}),
   }
 
   let synthesizer = firstRef

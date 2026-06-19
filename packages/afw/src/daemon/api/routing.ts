@@ -13,6 +13,8 @@ import {
   type CombinationModel,
   type FusionEndpoint,
   type FusionMember,
+  GENERATION_PATH_MODES,
+  type GenerationPathMode,
   MAX_FUSION_PANEL,
   type Modality,
   type ModelApi,
@@ -20,6 +22,7 @@ import {
   type ModelEntry,
   type ProviderAuth,
   type ProviderEntry,
+  REASONING_EFFORTS,
   type ReasoningEffort,
   findCombo,
   findModel,
@@ -44,7 +47,6 @@ import { baselineInputTokens, recentModels } from '../store/models-queries.ts'
 
 const MODEL_APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-responses']
 const MODALITIES: Modality[] = ['text', 'audio', 'image', 'video', 'pdf']
-const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const ONE_DAY = 24 * 3_600_000
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -58,6 +60,22 @@ async function jsonBody(c: Context): Promise<Record<string, unknown> | null> {
   } catch {
     return null
   }
+}
+
+function normalizeReasoningEffort(raw: unknown): ReasoningEffort | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return REASONING_EFFORTS.includes(value as ReasoningEffort)
+    ? (value as ReasoningEffort)
+    : undefined
+}
+
+function normalizeGenerationPath(raw: unknown): GenerationPathMode | undefined {
+  if (typeof raw !== 'string') return undefined
+  const value = raw.trim().toLowerCase()
+  return GENERATION_PATH_MODES.includes(value as GenerationPathMode)
+    ? (value as GenerationPathMode)
+    : undefined
 }
 
 // ── GET /api/routing/registry ─────────────────────────────────────
@@ -122,6 +140,17 @@ export async function handlePostProvider(c: Context): Promise<Response> {
   if (!MODEL_APIS.includes(api as ModelApi)) {
     return c.json({ error: `api must be one of ${MODEL_APIS.join(', ')}` }, 400)
   }
+  const reasoningEffort = normalizeReasoningEffort(body.reasoningEffort)
+  if (body.reasoningEffort != null && !reasoningEffort) {
+    return c.json({ error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}` }, 400)
+  }
+  const generationPath = normalizeGenerationPath(body.generationPath)
+  if (body.generationPath != null && !generationPath) {
+    return c.json(
+      { error: `generationPath must be one of ${GENERATION_PATH_MODES.join(', ')}` },
+      400,
+    )
+  }
 
   const reg0 = await readModelRegistry()
   const id =
@@ -155,10 +184,6 @@ export async function handlePostProvider(c: Context): Promise<Response> {
     return c.json({ error: 'authKind must be passthrough, bearer, or api-key' }, 400)
   }
 
-  const reasoningEffort = REASONING_EFFORTS.includes(body.reasoningEffort as ReasoningEffort)
-    ? (body.reasoningEffort as ReasoningEffort)
-    : undefined
-
   const provider: ProviderEntry = {
     id,
     label,
@@ -166,6 +191,7 @@ export async function handlePostProvider(c: Context): Promise<Response> {
     api: api as ModelApi,
     auth,
     origin: 'manual',
+    ...(generationPath ? { generationPath } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
   }
 
@@ -187,20 +213,20 @@ export async function handlePostProviderEffort(c: Context): Promise<Response> {
   const id = typeof body.id === 'string' ? body.id.trim() : ''
   if (!id) return c.json({ error: 'provider id required' }, 400)
   const raw = body.reasoningEffort
-  if (raw != null && !REASONING_EFFORTS.includes(raw as ReasoningEffort)) {
+  const effort = raw == null ? undefined : normalizeReasoningEffort(raw)
+  if (raw != null && !effort) {
     return c.json(
       { error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')} or null` },
       400,
     )
   }
-  const effort = raw == null ? undefined : (raw as ReasoningEffort)
   const reg = await mutateModelRegistry((r) => ({
     ...r,
     providers: r.providers.map((p) => {
       if (p.id !== id) return p
       const next: ProviderEntry = { ...p }
       if (effort) next.reasoningEffort = effort
-      else delete next.reasoningEffort
+      else next.reasoningEffort = undefined
       return next
     }),
   }))
@@ -244,11 +270,67 @@ function normalizeCostInput(raw: unknown): ModelCost | undefined {
   }
 }
 
+function rewriteFusionEndpoint(
+  endpoint: FusionEndpoint | undefined,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): FusionEndpoint | undefined {
+  if (!endpoint) return undefined
+  if (endpoint.modelId !== fromModelId || endpoint.providerId !== providerId) return endpoint
+  return { ...endpoint, modelId: toModelId }
+}
+
+function rewriteFusionMember(
+  member: FusionMember,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): FusionMember {
+  const primary = rewriteFusionEndpoint(member, fromModelId, toModelId, providerId)
+  const fallback = rewriteFusionEndpoint(member.fallback, fromModelId, toModelId, providerId)
+  if (primary === member && fallback === member.fallback) return member
+  return {
+    ...member,
+    modelId: primary?.modelId ?? member.modelId,
+    ...(primary?.providerId ? { providerId: primary.providerId } : {}),
+    ...(fallback ? { fallback } : {}),
+  }
+}
+
+function rewriteComboModelRefs(
+  combo: CombinationModel,
+  fromModelId: string,
+  toModelId: string,
+  providerId: string,
+): CombinationModel {
+  const panel = combo.panel.map((m) => rewriteFusionMember(m, fromModelId, toModelId, providerId))
+  const vision = rewriteFusionEndpoint(combo.vision, fromModelId, toModelId, providerId)
+  const judge = rewriteFusionEndpoint(combo.judge, fromModelId, toModelId, providerId)
+  const synthesizer = rewriteFusionEndpoint(combo.synthesizer, fromModelId, toModelId, providerId)
+  if (
+    panel.every((m, i) => m === combo.panel[i]) &&
+    vision === combo.vision &&
+    judge === combo.judge &&
+    synthesizer === combo.synthesizer
+  ) {
+    return combo
+  }
+  return {
+    ...combo,
+    panel,
+    ...(vision ? { vision } : {}),
+    ...(judge ? { judge } : {}),
+    ...(synthesizer ? { synthesizer } : {}),
+  }
+}
+
 export async function handlePostModel(c: Context): Promise<Response> {
   const body = await jsonBody(c)
   if (!body) return c.json({ error: 'malformed JSON body' }, 400)
 
   const id = typeof body.id === 'string' ? body.id.trim() : ''
+  const previousId = typeof body.previousId === 'string' ? body.previousId.trim() : ''
   const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : ''
   if (!id) return c.json({ error: 'model id required' }, 400)
   if (!providerId) return c.json({ error: 'providerId required' }, 400)
@@ -256,6 +338,10 @@ export async function handlePostModel(c: Context): Promise<Response> {
   const reg0 = await readModelRegistry()
   if (!findProvider(reg0, providerId)) {
     return c.json({ error: `unknown provider "${providerId}"` }, 400)
+  }
+  const reasoningEffort = normalizeReasoningEffort(body.reasoningEffort)
+  if (body.reasoningEffort != null && !reasoningEffort) {
+    return c.json({ error: `reasoningEffort must be one of ${REASONING_EFFORTS.join(', ')}` }, 400)
   }
 
   const cost = normalizeCostInput(body.cost)
@@ -268,15 +354,28 @@ export async function handlePostModel(c: Context): Promise<Response> {
     ...(typeof body.contextWindow === 'number' ? { contextWindow: body.contextWindow } : {}),
     ...(typeof body.maxTokens === 'number' ? { maxTokens: body.maxTokens } : {}),
     ...(cost ? { cost } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     origin: 'manual',
   }
 
+  const isRename = previousId !== '' && previousId !== id
   const reg = await mutateModelRegistry((r) => ({
     ...r,
     // Dedupe by (providerId, id) — the same model id can legitimately
     // exist under more than one provider, so a same-id row under a
     // different provider must survive this upsert untouched.
-    models: [...r.models.filter((m) => !(m.id === id && m.providerId === providerId)), model],
+    models: [
+      ...r.models.filter((m) => {
+        if (m.providerId !== providerId) return true
+        if (m.id === id) return false
+        if (isRename && m.id === previousId) return false
+        return true
+      }),
+      model,
+    ],
+    combos: isRename
+      ? r.combos.map((combo) => rewriteComboModelRefs(combo, previousId, id, providerId))
+      : r.combos,
   }))
   return c.json({ ok: true, models: reg.models })
 }
@@ -728,7 +827,7 @@ export async function handlePostSubagent(c: Context): Promise<Response> {
   if (typeof body.providerId === 'string') {
     const pid = body.providerId.trim()
     if (pid) next.providerId = pid
-    else delete next.providerId
+    else next.providerId = undefined
   }
   if (typeof body.minMaxTokens === 'number' && body.minMaxTokens >= 0) {
     next.minMaxTokens = body.minMaxTokens
@@ -952,7 +1051,7 @@ export async function handleDeleteCapability(c: Context): Promise<Response> {
     const capabilities = { ...prior.capabilities }
     delete capabilities[capabilityId as 'vision' | 'web_search']
     const next = { ...prior }
-    if (Object.keys(capabilities).length === 0) delete next.capabilities
+    if (Object.keys(capabilities).length === 0) next.capabilities = undefined
     else next.capabilities = capabilities
     return { ...p, agents: { ...p.agents, [routeKey]: next } }
   })

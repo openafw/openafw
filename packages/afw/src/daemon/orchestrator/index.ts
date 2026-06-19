@@ -42,13 +42,16 @@ import { type RoutedAttempt, captureChain, captureSingle } from './capture.ts'
 import {
   type AttemptResult,
   applyAuth,
+  applyOpenAIResponsesReasoningBytes,
   clampOutputBudgetBytes,
   dropSwapIncompatibleBetas,
+  effectiveReasoningEffort,
   execAttempt,
   execStream,
   generationUrl,
   isAnthropicNative,
   isGenerationPath,
+  isTransientUpstreamStatus,
   rewriteModel,
   stripAnthropicServerToolsFromBody,
 } from './exec.ts'
@@ -222,6 +225,61 @@ function parseJsonObject(body: ArrayBuffer): Record<string, unknown> | undefined
   return undefined
 }
 
+const SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS = [250, 750]
+
+function sameProtocolRetryDelayMs(attempt: number, res?: Response): number {
+  const retryAfter = res?.headers.get('retry-after')
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 5000)
+    const when = Date.parse(retryAfter)
+    if (Number.isFinite(when)) return Math.min(Math.max(when - Date.now(), 0), 5000)
+  }
+  return (
+    SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS[attempt] ??
+    SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.at(-1)!
+  )
+}
+
+function sameProtocolSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchSameProtocolWithTransientRetries(
+  build: () => Request,
+  label: string,
+): Promise<Response> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch(build())
+      if (
+        !isTransientUpstreamStatus(res.status) ||
+        attempt === SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.length
+      ) {
+        return res
+      }
+      await res.text().catch(() => '')
+      const delay = sameProtocolRetryDelayMs(attempt, res)
+      logger.warn(
+        `routing: transient HTTP ${res.status} from ${label} [same-protocol]; retrying in ` +
+          `${delay}ms (${attempt + 1}/${SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sameProtocolSleep(delay)
+    } catch (err) {
+      lastErr = err
+      if (attempt === SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.length) throw err
+      const delay = sameProtocolRetryDelayMs(attempt)
+      logger.warn(
+        `routing: transient upstream error from ${label} [same-protocol]: ${(err as Error).message}; ` +
+          `retrying in ${delay}ms (${attempt + 1}/${SAME_PROTOCOL_TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sameProtocolSleep(delay)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('upstream call failed')
+}
+
 // ── buffered path: single cross-protocol swap ─────────────────────
 
 /** Buffer a single cross-protocol model swap: one upstream call, the response
@@ -240,6 +298,7 @@ async function runBuffered(
     provider: resolved.provider,
     api: resolved.api,
     switchOn: [],
+    ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
   }
   const execCtx = { agent: ctx.agent, reqHeaders: ctx.reqHeaders }
   const orchStartWall = Date.now()
@@ -279,8 +338,7 @@ async function runBuffered(
 
     if (hasImage && targetIsTextOnly && visionCompanion?.via !== 'companion') {
       logger.warn(
-        `routing: ${ctx.routeKey} — image present but ${resolved.model.id} is text-only and no ` +
-          'vision companion is configured for this route',
+        `routing: ${ctx.routeKey} — image present but ${resolved.model.id} is text-only and no vision companion is configured for this route`,
       )
       return new Response(
         JSON.stringify({
@@ -303,6 +361,9 @@ async function runBuffered(
         provider: visionCompanion.ref.provider,
         api: visionCompanion.ref.api,
         switchOn: [],
+        ...(visionCompanion.ref.reasoningEffort
+          ? { reasoningEffort: visionCompanion.ref.reasoningEffort }
+          : {}),
       }
     }
     if (visionMemberToUse) {
@@ -455,11 +516,18 @@ function visionCompanionShim(
       model: ResolvedMember['model']
       provider: ResolvedMember['provider']
       api: ModelApi
+      reasoningEffort?: ResolvedMember['reasoningEffort']
     }
   | undefined {
   const cap = resolved.capabilities.vision
   if (cap?.via !== 'companion') return undefined
-  return { kind: 'vision', model: cap.ref.model, provider: cap.ref.provider, api: cap.ref.api }
+  return {
+    kind: 'vision',
+    model: cap.ref.model,
+    provider: cap.ref.provider,
+    api: cap.ref.api,
+    ...(cap.ref.reasoningEffort ? { reasoningEffort: cap.ref.reasoningEffort } : {}),
+  }
 }
 
 /** Render a single attempt as a client response, or an error JSON when it
@@ -471,7 +539,7 @@ function buildClientResponse(
   attempts: RoutedAttempt[],
   wantsStream: boolean,
 ): Response {
-  if (winner && winner.result.ok) {
+  if (winner?.result.ok) {
     const { ir, json, status } = winner.result
     if (wantsStream) {
       return new Response(synthesizeSse(clientApi, ir), {
@@ -538,6 +606,9 @@ async function runChain(
         provider: visionToolModel.provider,
         api: visionToolModel.api,
         switchOn: [],
+        ...(visionToolModel.reasoningEffort
+          ? { reasoningEffort: visionToolModel.reasoningEffort }
+          : {}),
       }
       const pre = await preDescribeImages(clientApi, req, visionMember, execCtx)
       for (const a of pre.attempts) attempts.push({ ...a, step: step++ })
@@ -917,6 +988,7 @@ async function runJudge(
     provider: judge.provider,
     api: judge.api,
     switchOn: [],
+    ...(judge.reasoningEffort ? { reasoningEffort: judge.reasoningEffort } : {}),
   }
   const userText = lastUserText(clientApi, req)
   const judgeIR: IRRequest = {
@@ -968,6 +1040,7 @@ async function runSynthesis(
     provider: synth.provider,
     api: synth.api,
     switchOn: [],
+    ...(synth.reasoningEffort ? { reasoningEffort: synth.reasoningEffort } : {}),
   }
   // A text-only synthesizer can't take the raw image — use the pre-described
   // request when one exists. A multimodal synthesizer keeps the real image.
@@ -976,9 +1049,7 @@ async function runSynthesis(
   let body: Record<string, unknown>
   try {
     const ir = parseRequestToIR(clientApi, base)
-    const deliberation =
-      `${FUSION_SYNTH_GUIDANCE}\n\nPanel answers:\n${renderPanelAnswers(answers)}` +
-      (analysis ? `\n\nJudge analysis:\n${analysis}` : '')
+    const deliberation = `${FUSION_SYNTH_GUIDANCE}\n\nPanel answers:\n${renderPanelAnswers(answers)}${analysis ? `\n\nJudge analysis:\n${analysis}` : ''}`
     const messages: IRMessage[] = mergeConsecutive([
       ...ir.messages,
       { role: 'user', content: [{ type: 'text', text: deliberation }] },
@@ -1064,6 +1135,9 @@ async function runFusion(
           provider: resolved.vision.provider,
           api: resolved.vision.api,
           switchOn: [],
+          ...(resolved.vision.reasoningEffort
+            ? { reasoningEffort: resolved.vision.reasoningEffort }
+            : {}),
         }
         const pre = await preDescribeImages(clientApi, req, visionMember, execCtx)
         for (const a of pre.attempts) attempts.push(a)
@@ -1180,6 +1254,7 @@ async function runStreamingSwap(
     provider: resolved.provider,
     api: resolved.api,
     switchOn: [],
+    ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
   }
 
   beginRequest()
@@ -1272,7 +1347,9 @@ async function runSameProtocolSwap(
   reqBody: ArrayBuffer,
 ): Promise<Response> {
   const { model, provider } = resolved
-  const upstreamUrl = generationUrl(provider.baseUrl, resolved.api)
+  const upstreamUrl = generationUrl(provider.baseUrl, resolved.api, {
+    generationPath: provider.generationPath,
+  })
   // Fast-path body prep: rewrite the model id, then drop Anthropic
   // server tools when the destination isn't api.anthropic.com — same
   // reasoning as buildUpstreamRequest, just on raw bytes since this
@@ -1285,6 +1362,16 @@ async function runSameProtocolSwap(
   // Same as buildUpstreamRequest's clamp, on raw bytes: keep the output
   // budget inside the routed model's declared context window.
   body = clampOutputBudgetBytes(body, resolved.api, model)
+  if (resolved.api === 'openai-responses') {
+    body = applyOpenAIResponsesReasoningBytes(
+      body,
+      effectiveReasoningEffort({
+        ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
+        model,
+        provider,
+      }),
+    )
+  }
 
   // Credential masking, scoped to this provider — swap real secrets for fakes
   // before the body leaves the machine; restore them on the client branch
@@ -1305,7 +1392,16 @@ async function runSameProtocolSwap(
   beginRequest()
   let upstreamRes: Response
   try {
-    upstreamRes = await fetch(new Request(upstreamUrl, { method: 'POST', headers, body }))
+    const label = `${provider.id}/${model.id}`
+    upstreamRes = await fetchSameProtocolWithTransientRetries(
+      () =>
+        new Request(upstreamUrl, {
+          method: 'POST',
+          headers: new Headers(headers),
+          body: body.slice(0),
+        }),
+      label,
+    )
   } catch (err) {
     endRequest()
     logger.error(

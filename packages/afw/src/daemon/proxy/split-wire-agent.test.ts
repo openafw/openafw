@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitWireAgent } from './index.ts'
+import { restPathForWireRequest, splitWireAgent } from './index.ts'
 
 describe('splitWireAgent', () => {
   it('returns the bare agent when there is no instance suffix', () => {
@@ -22,5 +22,26 @@ describe('splitWireAgent', () => {
       agent: 'claude-code',
       instanceId: 'a@b',
     })
+  })
+})
+
+describe('restPathForWireRequest', () => {
+  it('strips the raw per-instance agent segment, not the bare agent', () => {
+    expect(
+      restPathForWireRequest(
+        '/wire/claude-code@harness-eed410/v1/messages',
+        'claude-code@harness-eed410',
+      ),
+    ).toBe('/v1/messages')
+  })
+
+  it('keeps non-instance wire paths unchanged', () => {
+    expect(restPathForWireRequest('/wire/claude-code/v1/messages', 'claude-code')).toBe(
+      '/v1/messages',
+    )
+  })
+
+  it('returns slash for the wire root', () => {
+    expect(restPathForWireRequest('/wire/claude-code@worker', 'claude-code@worker')).toBe('/')
   })
 })

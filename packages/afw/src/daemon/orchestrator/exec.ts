@@ -6,7 +6,13 @@
 
 import type { AgentId } from '../../core/agent.ts'
 import { logger } from '../../core/logger.ts'
-import type { ModelApi, ProviderAuth, ProviderEntry } from '../../core/model-registry.ts'
+import type {
+  GenerationPathMode,
+  ModelApi,
+  ProviderAuth,
+  ProviderEntry,
+  ReasoningEffort,
+} from '../../core/model-registry.ts'
 import type { DecoderKind } from '../../core/routes.ts'
 import { getSecret } from '../../core/secrets.ts'
 import { makeRestoreTransform, maskText, restoreText } from '../proxy/credential-mask.ts'
@@ -16,11 +22,11 @@ import { getSecrets } from '../routing/load.ts'
 import {
   adaptForClaudeCodeOAuth,
   adaptForCodexBackend,
+  applyOpenAIResponsesReasoning,
   isCodexChatGptBackend,
 } from '../translate/codex-compat.ts'
 import { type IRResponse, parseResponseToIR, translateRequest } from '../translate/index.ts'
 import { getAgentToken } from './oauth/index.ts'
-import { recordQuotaHeaders } from './quota.ts'
 import type { ResolvedMember } from './resolve.ts'
 
 /** Does this path target the API's model-generation endpoint? Guards the
@@ -41,7 +47,11 @@ export function isGenerationPath(api: ModelApi, path: string): boolean {
  *  hits the right path because it constructs it itself; when an off-agent
  *  route (openclaw, hermes, …) sends through this provider via afw, we
  *  rebuild the URL here and must match codex's convention. */
-export function generationUrl(baseUrl: string, api: ModelApi): string {
+export function generationUrl(
+  baseUrl: string,
+  api: ModelApi,
+  opts: { generationPath?: GenerationPathMode } = {},
+): string {
   const base = baseUrl.replace(/\/+$/, '')
   const rest =
     api === 'anthropic-messages'
@@ -49,8 +59,17 @@ export function generationUrl(baseUrl: string, api: ModelApi): string {
       : api === 'openai-chat'
         ? 'chat/completions'
         : 'responses'
+  if (opts.generationPath === 'direct') return `${base}/${rest}`
   if (isCodexChatGptBackend(base)) return `${base}/${rest}`
   return base.endsWith('/v1') ? `${base}/${rest}` : `${base}/v1/${rest}`
+}
+
+export function effectiveReasoningEffort(member: {
+  reasoningEffort?: ReasoningEffort
+  model: { reasoningEffort?: ReasoningEffort }
+  provider: { reasoningEffort?: ReasoningEffort }
+}): ReasoningEffort | undefined {
+  return member.reasoningEffort ?? member.model.reasoningEffort ?? member.provider.reasoningEffort
 }
 
 /** Rewrite the `model` field of a request body. All three wire formats carry
@@ -123,8 +142,11 @@ export function withoutServerTools(body: Record<string, unknown>): Record<string
   })
   if (kept.length === tools.length) return body
   const next: Record<string, unknown> = { ...body }
-  if (kept.length === 0) delete next.tools
-  else next.tools = kept
+  if (kept.length === 0) {
+    const { tools: _discardedTools, ...rest } = next
+    return rest
+  }
+  next.tools = kept
   return next
 }
 
@@ -226,8 +248,8 @@ function stripClientAuth(headers: Headers): void {
 // suffix mirrors codex/claude-code's own format so the request looks
 // reasonable in their server logs. Bumping versions is harmless — the
 // upstream only checks the prefix and (loosely) the shape.
-const CODEX_CLIENT_UA = 'codex_cli_rs/0.81.0 (afw; openafw.com)'
-const CLAUDE_CODE_CLIENT_UA = 'claude-cli/2.0.0 (afw; openafw.com)'
+const CODEX_CLIENT_UA = 'codex_cli_rs/0.81.0 (afw; openguardrails.com)'
+const CLAUDE_CODE_CLIENT_UA = 'claude-cli/2.0.0 (afw; openguardrails.com)'
 
 function encodeJson(value: unknown): ArrayBuffer {
   const bytes = new TextEncoder().encode(JSON.stringify(value))
@@ -337,6 +359,24 @@ export function clampOutputBudgetBytes(
   return clampOutputBudget(obj, api, model) ? encodeJson(obj) : body
 }
 
+/** Byte-level variant for the same-protocol fast path. Injects a configured
+ *  OpenAI Responses reasoning effort without parsing the body elsewhere. */
+export function applyOpenAIResponsesReasoningBytes(
+  body: ArrayBuffer,
+  reasoningEffort: ReasoningEffort | undefined,
+): ArrayBuffer {
+  if (!reasoningEffort) return body
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body))
+  } catch {
+    return body
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return body
+  const obj = parsed as Record<string, unknown>
+  return applyOpenAIResponsesReasoning(obj, reasoningEffort) ? encodeJson(obj) : body
+}
+
 /** Recognized upstream context-overflow error signatures (lower-cased). Covers
  *  vLLM ("maximum context length is N tokens … reduce the length of the input"),
  *  OpenAI-compatible servers (`context_length_exceeded`), and Anthropic. */
@@ -409,6 +449,94 @@ function isOverflowStatus(status: number): boolean {
   return status === 400 || status === 413 || status === 422
 }
 
+const TRANSIENT_RETRY_DELAYS_MS = [250, 750]
+
+export function isTransientUpstreamStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
+}
+
+function retryDelayMs(attempt: number, res?: Response): number {
+  const retryAfter = res?.headers.get('retry-after')
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 5000)
+    const when = Date.parse(retryAfter)
+    if (Number.isFinite(when)) return Math.min(Math.max(when - Date.now(), 0), 5000)
+  }
+  return TRANSIENT_RETRY_DELAYS_MS[attempt] ?? TRANSIENT_RETRY_DELAYS_MS.at(-1)!
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchBufferedWithTransientRetries(
+  build: () => Promise<BuiltRequest>,
+  label: string,
+): Promise<{ res: Response; text: string }> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+    let built: BuiltRequest
+    try {
+      built = await build()
+      const res = await fetch(built.request)
+      const text = restoreText(await res.text(), built.restore)
+      if (!isTransientUpstreamStatus(res.status) || attempt === TRANSIENT_RETRY_DELAYS_MS.length) {
+        return { res, text }
+      }
+      const delay = retryDelayMs(attempt, res)
+      logger.warn(
+        `routing: transient HTTP ${res.status} from ${label}; retrying in ${delay}ms ` +
+          `(${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sleep(delay)
+    } catch (err) {
+      lastErr = err
+      if (attempt === TRANSIENT_RETRY_DELAYS_MS.length) throw err
+      const delay = retryDelayMs(attempt)
+      logger.warn(
+        `routing: transient upstream error from ${label}: ${(err as Error).message}; ` +
+          `retrying in ${delay}ms (${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sleep(delay)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('upstream call failed')
+}
+
+async function fetchStreamWithTransientRetries(
+  build: () => Promise<BuiltRequest>,
+  label: string,
+): Promise<{ res: Response; restore: Map<string, string> }> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const built = await build()
+      const res = await fetch(built.request)
+      if (!isTransientUpstreamStatus(res.status) || attempt === TRANSIENT_RETRY_DELAYS_MS.length) {
+        return { res, restore: built.restore }
+      }
+      await res.text().catch(() => '')
+      const delay = retryDelayMs(attempt, res)
+      logger.warn(
+        `routing: transient HTTP ${res.status} from ${label} [stream]; retrying in ${delay}ms ` +
+          `(${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sleep(delay)
+    } catch (err) {
+      lastErr = err
+      if (attempt === TRANSIENT_RETRY_DELAYS_MS.length) throw err
+      const delay = retryDelayMs(attempt)
+      logger.warn(
+        `routing: transient upstream error from ${label} [stream]: ${(err as Error).message}; ` +
+          `retrying in ${delay}ms (${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`,
+      )
+      await sleep(delay)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('upstream call failed')
+}
+
 /** The outcome of one buffered upstream call. */
 export type AttemptResult =
   | {
@@ -471,6 +599,7 @@ async function buildUpstreamRequest(
     model: member.model.id,
     stream,
   }
+  const reasoningEffort = effectiveReasoningEffort(member)
 
   // Claude.ai subscription routes need both the beta flags (set in
   // applyAuth) and an exact-match `system` field — the adapter rewrites
@@ -480,14 +609,16 @@ async function buildUpstreamRequest(
     member.provider.auth.kind === 'agent-oauth' &&
     member.provider.auth.agent === 'claude-code'
   ) {
-    adaptForClaudeCodeOAuth(upstreamBody, member.provider.reasoningEffort)
+    adaptForClaudeCodeOAuth(upstreamBody, reasoningEffort)
   }
 
   // codex's ChatGPT session endpoint speaks a session-bound subset of the
   // public Responses API; the body adapter mirrors codex-CLI's own request
   // shape (store, reasoning.effort, include, text.verbosity, …).
   if (member.api === 'openai-responses' && isCodexChatGptBackend(member.provider.baseUrl)) {
-    adaptForCodexBackend(upstreamBody, member.provider.reasoningEffort)
+    adaptForCodexBackend(upstreamBody, reasoningEffort)
+  } else if (member.api === 'openai-responses') {
+    applyOpenAIResponsesReasoning(upstreamBody, reasoningEffort)
   }
 
   // Shrink the output-token budget to fit the routed model's declared
@@ -561,19 +692,16 @@ export async function execAttempt(
 ): Promise<AttemptResult> {
   const startedAtWall = Date.now()
   const t0 = performance.now()
-  const upstreamUrl = generationUrl(member.provider.baseUrl, member.api)
+  const upstreamUrl = generationUrl(member.provider.baseUrl, member.api, {
+    generationPath: member.provider.generationPath,
+  })
+  const label = `${member.provider.id}/${member.model.id}`
 
   try {
-    const { request, restore } = await buildUpstreamRequest(
-      member,
-      clientApi,
-      clientRequest,
-      ctx,
-      upstreamUrl,
-      false,
+    let { res, text } = await fetchBufferedWithTransientRetries(
+      () => buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, false),
+      label,
     )
-    let res = await fetch(request)
-    let text = restoreText(await res.text(), restore)
 
     // Context-overflow retry: the upstream rejected because input + output
     // crossed its window. Its error reports the exact figures, so retry once
@@ -583,17 +711,11 @@ export async function execAttempt(
     if (res.status >= 400 && isOverflowStatus(res.status)) {
       const budget = safeRetryBudget(text, member.model)
       if (budget != null) {
-        const retry = await buildUpstreamRequest(
-          member,
-          clientApi,
-          clientRequest,
-          ctx,
-          upstreamUrl,
-          false,
-          budget,
+        const { res: res2, text: text2 } = await fetchBufferedWithTransientRetries(
+          () =>
+            buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, false, budget),
+          `${label} overflow-retry`,
         )
-        const res2 = await fetch(retry.request)
-        const text2 = restoreText(await res2.text(), retry.restore)
         if (res2.status < 400) {
           logger.info(
             `routing: ${member.model.id} retried with max output ${budget} after context overflow`,
@@ -605,9 +727,6 @@ export async function execAttempt(
     }
 
     const durMs = performance.now() - t0
-    // Snapshot the provider's quota from its rate-limit headers (present on
-    // success and on 429s) so a `quota-pct` switch rule can read it next call.
-    recordQuotaHeaders(member.provider.id, res.headers)
 
     if (res.status >= 400) {
       return {
@@ -690,19 +809,16 @@ export async function execStream(
 ): Promise<StreamAttempt> {
   const startedAtWall = Date.now()
   const t0 = performance.now()
-  const upstreamUrl = generationUrl(member.provider.baseUrl, member.api)
+  const upstreamUrl = generationUrl(member.provider.baseUrl, member.api, {
+    generationPath: member.provider.generationPath,
+  })
+  const label = `${member.provider.id}/${member.model.id}`
 
   try {
-    const { request, restore } = await buildUpstreamRequest(
-      member,
-      clientApi,
-      clientRequest,
-      ctx,
-      upstreamUrl,
-      true,
+    const { res, restore } = await fetchStreamWithTransientRetries(
+      () => buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, true),
+      label,
     )
-    const res = await fetch(request)
-    recordQuotaHeaders(member.provider.id, res.headers)
 
     if (res.status >= 400 && isOverflowStatus(res.status)) {
       // Same context-overflow retry as the buffered path — the error body must
@@ -710,16 +826,11 @@ export async function execStream(
       const text = restoreText(await res.text(), restore)
       const budget = safeRetryBudget(text, member.model)
       if (budget != null) {
-        const retry = await buildUpstreamRequest(
-          member,
-          clientApi,
-          clientRequest,
-          ctx,
-          upstreamUrl,
-          true,
-          budget,
+        const { res: res2, restore: restore2 } = await fetchStreamWithTransientRetries(
+          () =>
+            buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, true, budget),
+          `${label} overflow-retry`,
         )
-        const res2 = await fetch(retry.request)
         if (res2.status < 400 && res2.body) {
           logger.info(
             `routing: ${member.model.id} retried with max output ${budget} after context overflow [stream]`,
@@ -727,7 +838,7 @@ export async function execStream(
           return {
             ok: true,
             status: res2.status,
-            body: restoreStream(res2.body, retry.restore),
+            body: restoreStream(res2.body, restore2),
             durMs: performance.now() - t0,
             startedAtWall,
             upstreamUrl,

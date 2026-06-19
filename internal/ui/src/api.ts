@@ -2,11 +2,13 @@ import type {
   AccessKeyItem,
   AgentInstanceDetail,
   AgentInstanceItem,
+  GenerationPathMode,
   KeyConnection,
   KeysResponse,
   MaskingResponse,
   McpServerItem,
   PolicyResponse,
+  ReasoningEffort,
   Registry,
   RiskPage,
   RoutingTarget,
@@ -204,6 +206,8 @@ export type ProviderInput = {
   authKind: 'passthrough' | 'bearer' | 'api-key'
   authHeader?: string
   apiKey?: string
+  generationPath?: GenerationPathMode
+  reasoningEffort?: ReasoningEffort
 }
 
 /** Create (no id) or edit (with id) a provider — the backend upserts by id. */
@@ -219,10 +223,12 @@ export async function removeProvider(id: string): Promise<void> {
  *  string sent to the provider; label mirrors it. */
 export async function saveModel(m: {
   id: string
+  previousId?: string
   providerId: string
   label?: string
   input: string[]
   contextWindow?: number
+  reasoningEffort?: ReasoningEffort
 }): Promise<void> {
   await send('POST', '/api/routing/model', m)
 }

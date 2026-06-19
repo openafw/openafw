@@ -94,6 +94,11 @@ export function splitWireAgent(rawAgent: string): { agent: AgentId; instanceId?:
   return { agent: rawAgent.slice(0, at) as AgentId, ...(instanceId ? { instanceId } : {}) }
 }
 
+export function restPathForWireRequest(pathname: string, rawAgent: string): string {
+  const prefix = `/wire/${rawAgent}`
+  return pathname.slice(prefix.length) || '/'
+}
+
 export async function handleWireRequest(c: Context): Promise<Response> {
   // The raw segment is what the URL path actually contains, so path-stripping
   // must use it; the split drives routing + capture.
@@ -116,8 +121,7 @@ export async function handleWireRequest(c: Context): Promise<Response> {
   // particular call upstream regardless.
   {
     const reqUrl = new URL(c.req.url)
-    const prefix = `/wire/${rawAgent}`
-    const restPath = reqUrl.pathname.slice(prefix.length) || '/'
+    const restPath = restPathForWireRequest(reqUrl.pathname, rawAgent)
     if (req.method === 'GET' && isClaudeDesktopModelsRequest(agent, restPath)) {
       const body = await synthesizeClaudeDesktopModels()
       return new Response(JSON.stringify(body), {
@@ -163,8 +167,7 @@ export async function handleWireRequest(c: Context): Promise<Response> {
   // upstreams like "https://example.com/v1/gateway" into "https://example.com/…".
   // Manual string concat preserves the base path.
   const reqUrl = new URL(c.req.url)
-  const prefix = `/wire/${agent}`
-  const restPath = reqUrl.pathname.slice(prefix.length) || '/'
+  const restPath = restPathForWireRequest(reqUrl.pathname, rawAgent)
   const upstreamBase = route.upstream.replace(/\/$/, '')
   const restWithSlash = restPath.startsWith('/') ? restPath : `/${restPath}`
   const upstreamUrl = new URL(upstreamBase + restWithSlash + reqUrl.search)

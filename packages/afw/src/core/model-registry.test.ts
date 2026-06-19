@@ -205,6 +205,26 @@ describe('normalizeModelRegistry', () => {
     expect(reg.models[0]?.cost).toEqual({ input: 1, output: 2 })
     expect(reg.models[1]?.cost).toBeUndefined()
   })
+
+  it('preserves provider generation paths and model reasoning effort overrides', () => {
+    const reg = normalizeModelRegistry({
+      version: 3,
+      providers: [
+        {
+          ...provider,
+          api: 'openai-responses',
+          generationPath: 'direct',
+          reasoningEffort: 'high',
+        },
+      ],
+      models: [{ ...model, reasoningEffort: 'xhigh' }],
+      combos: [],
+    })
+
+    expect(reg.providers[0]?.generationPath).toBe('direct')
+    expect(reg.providers[0]?.reasoningEffort).toBe('high')
+    expect(reg.models[0]?.reasoningEffort).toBe('xhigh')
+  })
 })
 
 describe('registry helpers', () => {

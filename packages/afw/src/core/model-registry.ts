@@ -23,9 +23,16 @@ export type ModelApi = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
 export type Modality = 'text' | 'audio' | 'image' | 'video' | 'pdf'
 
 /** Reasoning effort knob shared across OpenAI Responses (`reasoning.effort`)
- *  and Anthropic Messages (thinking budget). 'xhigh' is honored by Anthropic
- *  thinking budget; for OpenAI it's clamped to 'high'. */
+ *  and Anthropic Messages (thinking budget). */
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+/** How to append generation endpoints to a provider's base URL.
+ *
+ *  - `versioned` is the OpenAI/Anthropic SDK convention: add `/v1` when the
+ *    base URL does not already end with it.
+ *  - `direct` appends the endpoint directly to the base. Some gateways expose
+ *    Responses as `/responses` rather than `/v1/responses`. */
+export type GenerationPathMode = 'versioned' | 'direct'
 
 export type ProviderAuth =
   // Inject a custom header (e.g. `x-api-key`) with a value from secrets.json.
@@ -54,6 +61,8 @@ export type ProviderEntry = {
    *  set from this); for api-key providers it's an optional default a
    *  routed call can carry to a reasoning-capable model. */
   reasoningEffort?: ReasoningEffort
+  /** Optional endpoint path mode for gateways that do not use `/v1`. */
+  generationPath?: GenerationPathMode
 }
 
 /** USD per million tokens, the display convention used across afw. */
@@ -74,6 +83,8 @@ export type ModelEntry = {
   input: Modality[]
   contextWindow?: number
   maxTokens?: number
+  /** Optional model-level override for provider.reasoningEffort. */
+  reasoningEffort?: ReasoningEffort
   cost?: ModelCost
   origin: 'seeded' | 'manual'
 }
@@ -159,7 +170,8 @@ export const EMPTY_REGISTRY: ModelRegistry = {
 
 const MODEL_APIS: ModelApi[] = ['anthropic-messages', 'openai-chat', 'openai-responses']
 const MODALITIES: Modality[] = ['text', 'audio', 'image', 'video', 'pdf']
-const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+export const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+export const GENERATION_PATH_MODES: GenerationPathMode[] = ['versioned', 'direct']
 
 // ── helpers ───────────────────────────────────────────────────────
 
@@ -228,7 +240,7 @@ function normalizeAuth(raw: unknown): ProviderAuth | undefined {
 
 function normalizeProvider(raw: unknown): ProviderEntry | undefined {
   if (!isObj(raw)) return undefined
-  const { id, label, baseUrl, api, origin, seededFrom, reasoningEffort } = raw
+  const { id, label, baseUrl, api, origin, seededFrom, reasoningEffort, generationPath } = raw
   if (typeof id !== 'string' || id === '') return undefined
   if (typeof baseUrl !== 'string' || baseUrl === '') return undefined
   if (!MODEL_APIS.includes(api as ModelApi)) return undefined
@@ -244,6 +256,9 @@ function normalizeProvider(raw: unknown): ProviderEntry | undefined {
     ...(typeof seededFrom === 'string' ? { seededFrom } : {}),
     ...(REASONING_EFFORTS.includes(reasoningEffort as ReasoningEffort)
       ? { reasoningEffort: reasoningEffort as ReasoningEffort }
+      : {}),
+    ...(GENERATION_PATH_MODES.includes(generationPath as GenerationPathMode)
+      ? { generationPath: generationPath as GenerationPathMode }
       : {}),
   }
 }
@@ -262,7 +277,7 @@ function normalizeCost(raw: unknown): ModelCost | undefined {
 
 function normalizeModel(raw: unknown): ModelEntry | undefined {
   if (!isObj(raw)) return undefined
-  const { id, providerId, label, api, origin, contextWindow, maxTokens } = raw
+  const { id, providerId, label, api, origin, contextWindow, maxTokens, reasoningEffort } = raw
   if (typeof id !== 'string' || id === '') return undefined
   if (typeof providerId !== 'string' || providerId === '') return undefined
   const input = Array.isArray(raw.input)
@@ -277,6 +292,9 @@ function normalizeModel(raw: unknown): ModelEntry | undefined {
     input: input.length > 0 ? input : ['text'],
     ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
     ...(typeof maxTokens === 'number' ? { maxTokens } : {}),
+    ...(REASONING_EFFORTS.includes(reasoningEffort as ReasoningEffort)
+      ? { reasoningEffort: reasoningEffort as ReasoningEffort }
+      : {}),
     ...(cost ? { cost } : {}),
     origin: origin === 'manual' ? 'manual' : 'seeded',
   }

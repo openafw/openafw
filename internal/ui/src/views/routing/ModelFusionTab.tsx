@@ -3,7 +3,7 @@ import { fetchRegistry, fetchToolProviders, removeCombo, saveCombo } from '../..
 import type { CombinationModel, Registry, ToolProvider } from '../../types'
 import { FusionEditor } from './FusionEditor'
 
-// Dedicated home for Model Fusion — agentfw's local OpenRouter Fusion. A fusion
+// Dedicated home for Model Fusion — afw's local OpenRouter Fusion. A fusion
 // model runs a panel of models (from the Models tab) in parallel, a judge
 // distils their answers, and a synthesizer writes the final one. Built here,
 // assigned to an agent on the Routes tab.
@@ -182,7 +182,9 @@ export function ModelFusionTab() {
           </button>
         )}
         {models.length === 0 && (
-          <p className="hint">Add some models on the <strong>Models</strong> tab first.</p>
+          <p className="hint">
+            Add some models on the <strong>Models</strong> tab first.
+          </p>
         )}
       </section>
     </div>

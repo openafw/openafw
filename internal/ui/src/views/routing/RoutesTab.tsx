@@ -134,7 +134,7 @@ export function RoutesTab() {
         {policy.routes.length === 0 ? (
           <div className="empty">
             <p>
-              No routes yet — launch a wired agent (e.g. <code>agentfw claude</code>).
+              No routes yet — launch a wired agent (e.g. <code>afw claude</code>).
             </p>
           </div>
         ) : (
@@ -148,8 +148,8 @@ export function RoutesTab() {
                 <th>
                   Details
                   <HelpTip>
-                    For a fusion model, the panel + judge + synthesizer it carries. Edit these on the{' '}
-                    <strong>Models</strong> tab — a route just picks one.
+                    For a fusion model, the panel + judge + synthesizer it carries. Edit these on
+                    the <strong>Models</strong> tab — a route just picks one.
                   </HelpTip>
                 </th>
               </tr>
@@ -260,7 +260,7 @@ export function RoutesTab() {
                 <td>
                   Min output budget
                   <HelpTip>
-                    agentfw tells a subagent apart from a tiny utility call by the request's
+                    afw tells a subagent apart from a tiny utility call by the request's
                     <code> max_tokens</code>. Calls asking for fewer than{' '}
                     {sub.minMaxTokens.toLocaleString()} output tokens are treated as utility calls
                     and left on their original model — only larger calls get downgraded.

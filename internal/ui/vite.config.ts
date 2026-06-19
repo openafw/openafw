@@ -11,8 +11,8 @@ export default defineConfig({
   root: here,
   plugins: [react()],
   build: {
-    // The daemon serves packages/agentfw/ui-dist (see daemon/server.ts).
-    outDir: resolve(here, '../../packages/agentfw/ui-dist'),
+    // The daemon serves packages/afw/ui-dist (see daemon/server.ts).
+    outDir: resolve(here, '../../packages/afw/ui-dist'),
     emptyOutDir: true,
     sourcemap: false,
   },

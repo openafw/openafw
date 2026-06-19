@@ -10,6 +10,7 @@ function agentCount(status: WireStatus): number {
 const TABS: Array<{ key: NavSection; href: string; label: string; verb: string }> = [
   { key: 'see', href: '#/see', label: 'See', verb: 'see' },
   { key: 'routing', href: '#/routing', label: 'Routing', verb: 'route' },
+  { key: 'keys', href: '#/keys', label: 'Connect', verb: 'keys' },
   { key: 'guard', href: '#/guard', label: 'Guard', verb: 'guard' },
 ]
 
@@ -43,7 +44,7 @@ export function Nav({ active }: { active: NavSection }) {
       <div className="nav-row nav-row-main">
         <a className="nav-brand" href="#/" title="Home">
           <span className="nav-dot" />
-          <span>agentfw</span>
+          <span>afw</span>
         </a>
         <nav className="nav-pillars" aria-label="Sections">
           {TABS.map((t) => (
@@ -64,7 +65,7 @@ export function Nav({ active }: { active: NavSection }) {
               title={
                 status.wiredAgents.length > 0
                   ? `Agents the wire accepts traffic for:\n${status.wiredAgents.join('\n')}`
-                  : 'No agents wired yet — launch one with `agentfw claude`'
+                  : 'No agents wired yet — launch one with `afw claude`'
               }
             >
               ●●● {agentCount(status)} wired

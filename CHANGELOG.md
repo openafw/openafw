@@ -1,12 +1,12 @@
 # Changelog
 
-All notable changes to `@openguardrails/agentfw`. The format follows
+All notable changes to `openafw`. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; dates are
 local to where the release was cut.
 
 ## [0.1.0] — unreleased
 
-The firewall cut. `agentfw` is forked from an earlier cost-saver project by
+The firewall cut. `afw` is forked from an earlier cost-saver project by
 porting its firewall core and dropping the cost-saver/metric surfaces.
 
 ### Added

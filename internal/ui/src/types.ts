@@ -143,7 +143,7 @@ export type WireStatus = {
   driftedCount: number
   /** Agents the proxy will accept traffic for — derived from routes.json, not
    *  from rewritten config files. This is the real "wired" signal in the
-   *  launcher model (agentfw never edits an agent's config). */
+   *  launcher model (afw never edits an agent's config). */
   wiredAgents: string[]
   entries: WireEntry[]
 }
@@ -182,10 +182,17 @@ export type ModelApi = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
 // A rule that advances a chain member to the next on failure. The UI only
 // authors `error` failover; budget/token rules stay CLI/advanced but are
 // preserved when present.
+// The window a token/USD cap is measured over: a calendar day/month, or a
+// rolling N-hour window (the subscription's 5-hour quota is `{rollingHours:5}`).
+export type SwitchPeriod = 'day' | 'month' | { rollingHours: number }
+
 export type SwitchRule =
   | { kind: 'error' }
-  | { kind: 'budget'; usdLimit: number; period: 'day' | 'month' }
-  | { kind: 'tokens'; tokenLimit: number; period: 'day' | 'month' }
+  | { kind: 'budget'; usdLimit: number; period: SwitchPeriod }
+  | { kind: 'tokens'; tokenLimit: number; period: SwitchPeriod }
+  // For subscription (OAuth) upstreams whose absolute token budget is invisible:
+  // switch when the provider's own reported quota usage crosses this percentage.
+  | { kind: 'quota-pct'; usedPct: number }
 
 export type ChainMember = { modelId: string; providerId?: string; switchOn?: SwitchRule[] }
 
@@ -200,7 +207,7 @@ export type CapabilityFulfillment =
   | { via: 'companion'; modelId: string; providerId?: string }
   | { via: 'local'; providerId?: string }
 
-// Model Fusion — agentfw's local take on OpenRouter Fusion. A `panel` of models
+// Model Fusion — afw's local take on OpenRouter Fusion. A `panel` of models
 // answers the prompt in parallel, a `judge` distils their answers into a
 // structured analysis, and a `synthesizer` writes the final answer grounded in
 // it. Routes target a fusion model by id. Each panel member can carry a vision
@@ -226,6 +233,9 @@ export type CombinationModel = {
   webSearch?: { providerId?: string }
   judge?: FusionEndpoint
   synthesizer?: FusionEndpoint
+  // A single cheap model for subagent / cron tasks routed to this fusion — they
+  // skip the panel/judge/synthesizer and go straight to it.
+  cheapModel?: FusionEndpoint
   origin?: string
 }
 
@@ -258,6 +268,34 @@ export type SubagentDowngrade = {
   providerId?: string
   minMaxTokens: number
 }
+
+// afw API keys — auth tokens a generic OpenAI/Anthropic-compatible agent
+// presents to the /v1 endpoint. The request's model name (a tier) selects the
+// real model, not the key. See core/access-keys.ts.
+export type AccessKeyItem = {
+  id: string
+  label: string
+  token: string
+  agent: string
+  instance?: string
+  createdAt: number
+  lastUsedAt?: number
+}
+
+// The three fixed model names, named after Starbucks cup sizes, low → high.
+export type KeyConnection = {
+  baseUrl: string
+  anthropicBaseUrl: string
+  port: number
+  modelNames: Array<{ tier: string; name: string; rank: number }>
+}
+
+export type KeysResponse = { keys: AccessKeyItem[]; connection: KeyConnection }
+
+// A model tier (Tall/Grande/Venti) and the routing target the user mapped it to.
+export type TierRow = { tier: string; display: string; rank: number; target?: RoutingTarget }
+
+export type TiersResponse = { tiers: TierRow[]; connection: KeyConnection }
 
 export type PolicyResponse = {
   policy: RoutingPolicy

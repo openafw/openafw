@@ -50,7 +50,7 @@ function compact(n: number): string {
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
 }
 
-/** Compact token count for headline figures (e.g. 12.3K, 1.1M). agentfw
+/** Compact token count for headline figures (e.g. 12.3K, 1.1M). afw
  *  reports usage in tokens, never dollars. */
 export function compactTokens(n: number): string {
   return compact(n)

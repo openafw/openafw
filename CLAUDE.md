@@ -1,13 +1,13 @@
-# agentfw — project context
+# afw — project context
 
 > The local firewall for AI agents: route and repair them, and keep your
 > secrets off the model, the API relay, and the supply chain.
 
-`agentfw` is a **local firewall for AI agents**: a small local proxy that
+`afw` is a **local firewall for AI agents**: a small local proxy that
 taps the wire between your coding agents and the model providers they
 call. From that one vantage point it does **practical** work and
 **security** work at once — no agent switch, no framework, no cloud. You
-don't rewrite anything: agentfw detects what you already run (Claude Code,
+don't rewrite anything: afw detects what you already run (Claude Code,
 OpenClaw, Hermes, Codex, Claude Desktop — anything that calls an LLM or
 speaks MCP) and wraps it on the fly (launched per-process for CLI agents;
 pointed at the wire for app/daemon agents).
@@ -28,7 +28,7 @@ a middleman it can't see — a cheap API relay terminates TLS, reads the
 plaintext, and re-encrypts to the next hop, so every pasted secret and
 every command the model returns is exposed and *modifiable* (the 2026 UCSB
 study *Your Agent Is Mine* found relays exfiltrating keys, draining a real
-wallet, and rewriting `pip install requests` into a typosquat). `agentfw`
+wallet, and rewriting `pip install requests` into a typosquat). `afw`
 sits between the agent and both. The masking pass lives in
 `src/core/masking.ts` + `src/daemon/proxy/credential-mask.ts`; the detector
 pipeline in `src/daemon/risk/` (`pipeline.ts` registers them; the
@@ -36,7 +36,7 @@ tool-result `prompt-injection.ts` detector is kept but gated — paid).
 
 This file orients Claude Code (and other AI assistants) to the project.
 
-> **Heads-up — recent fork.** `agentfw` was carved out of an earlier
+> **Heads-up — recent fork.** `afw` was carved out of an earlier
 > cost-saver project ("OpenThomas") by porting its firewall core (wire
 > proxy, decoders, model-routing engine, `wire`/`unwire`/`detect` CLI)
 > and dropping the cost-saver/metric surfaces. The original tree is
@@ -64,32 +64,32 @@ command-tampering / supply-chain checks are roadmap.
 
 | Thing | Name |
 |---|---|
-| Project / brand | agentfw (by OpenGuardrails) |
-| GitHub repo | `openguardrails/agentfw` |
+| Project / brand | afw (by OpenGuardrails) |
+| GitHub repo | `openafw/openafw` |
 | npm scope | `@openguardrails` |
-| npm package | `@openguardrails/agentfw` |
-| Main binary | `agentfw` |
-| MCP stdio wrapper bin | `agentfw-tap` |
-| MCP tools server bin | `agentfw-tools` |
-| Daemon subcommand | `agentfw daemon` |
-| Config dir | `~/.agentfw/` |
-| Trace dir | `~/.agentfw/wire/traces/` |
-| Backups dir | `~/.agentfw/backups/` |
-| Logs dir | `~/.agentfw/logs/` |
-| Env overrides | `AGENTFW_HOME`, `AGENTFW_PORT`, `AGENTFW_LOG_LEVEL` |
+| npm package | `openafw` |
+| Main binary | `afw` |
+| MCP stdio wrapper bin | `afw-tap` |
+| MCP tools server bin | `afw-tools` |
+| Daemon subcommand | `afw daemon` |
+| Config dir | `~/.afw/` |
+| Trace dir | `~/.afw/wire/traces/` |
+| Backups dir | `~/.afw/backups/` |
+| Logs dir | `~/.afw/logs/` |
+| Env overrides | `AFW_HOME`, `AFW_PORT`, `AFW_LOG_LEVEL` |
 | Default UI URL | `http://localhost:9877` |
-| macOS launchd label | `com.openguardrails.agentfw` |
+| macOS launchd label | `com.openguardrails.afw` |
 | Editions | One — free, MIT, fully open source |
 
 `wire` is preserved as **architectural terminology** (URL paths under
-`/wire/`, storage under `~/.agentfw/wire/`, the `wire` / `unwire`
+`/wire/`, storage under `~/.afw/wire/`, the `wire` / `unwire`
 commands) — it's load-bearing in the code, not a brand asset. `proxy` is
 an architecture word only, never positioning.
 
 ## Repo layout
 
 ```
-agentfw/                       (repo: openguardrails/agentfw)
+afw/                       (repo: openafw/openafw)
 ├── CLAUDE.md                  (this file)
 ├── README.md                  (public face — firewall story)
 ├── PRIVACY.md                 (data handling contract)
@@ -99,9 +99,9 @@ agentfw/                       (repo: openguardrails/agentfw)
 ├── .strategy/                 (PRIVATE, gitignored — STALE cost-saver design)
 ├── references/                (third-party projects studied — gitignored)
 │   └── openthomas/            (frozen pre-fork tree; port reference, do not import)
-└── packages/agentfw/          (the npm package: @openguardrails/agentfw)
+└── packages/afw/          (the npm package: openafw)
     └── src/
-        ├── bin/               (agentfw, tap, tools entrypoints)
+        ├── bin/               (afw, tap, tools entrypoints)
         ├── core/              (config, paths, packet, routing-policy, …)
         ├── cli/               (wire / unwire / detect / route / status / daemon)
         └── daemon/
@@ -140,7 +140,7 @@ agentfw/                       (repo: openguardrails/agentfw)
 
 ## Mental model
 
-`agentfw` is an **AI agent firewall**. It taps the wire and does three
+`afw` is an **AI agent firewall**. It taps the wire and does three
 jobs on every call: **see → route → guard**.
 
 - **See.** The proxy (`daemon/proxy/`) captures each request/response;
@@ -153,7 +153,7 @@ jobs on every call: **see → route → guard**.
   `Agent` tool, subagents never do — presence ⇒ planner (untouched),
   absence ⇒ subagent (routable). Lives in
   `daemon/orchestrator/subagent.ts`, configured via
-  `~/.agentfw/routing.json`.
+  `~/.afw/routing.json`.
 - **Guard.** Two layers. **Credential masking** (`core/masking.ts`,
   `daemon/proxy/credential-mask.ts`) swaps real secrets for fixed fakes on
   the outbound request — keyed per upstream host, opt-in, default off — and
@@ -177,16 +177,16 @@ detect is the pipeline underneath.
 6. `src/core/packet.ts` — the `AgentPacket` shape detectors and the store see.
 
 ### Gotchas (still load-bearing)
-- **agentfw never rewrites an agent's shared config.** Connection is by runtime
+- **afw never rewrites an agent's shared config.** Connection is by runtime
   form: **CLI** agents (claude, codex) are *launched* with a per-process override
-  — `agentfw claude` via Claude Code's `--settings`, `agentfw codex` via `-c`
+  — `afw claude` via Claude Code's `--settings`, `afw codex` via `-c`
   flags (`src/cli/launch/`); **app/daemon** agents (claude-desktop, openclaw,
   hermes) get printed `manualInstructions()` and the user points them at the wire.
   There is no `wire`/`unwire` command. The firewall-side route + credentials are
   registered automatically by `ensureWireRoute` (`src/cli/launch/route-setup.ts`),
   which reuses each detector's `detect()` but writes nothing to the agent's config.
-- **Per-directory launch memory.** `agentfw claude` remembers a directory's
-  routing choice in `~/.agentfw/launch/<hash>.json` (`src/cli/launch/per-dir.ts`).
+- **Per-directory launch memory.** `afw claude` remembers a directory's
+  routing choice in `~/.afw/launch/<hash>.json` (`src/cli/launch/per-dir.ts`).
 - **Legacy config-rewrite code is dormant, not live.** The old detector
   `wire()`/`unwire()` + `cli/backup/*` + `cli/wire/orchestrate.ts` remain in the
   tree but are no longer reachable from the CLI (pending a cleanup pass). Don't
@@ -194,15 +194,15 @@ detect is the pipeline underneath.
   `.tmp`, fsync, rename (`core/atomic-file.ts`).
 - **Path-based routing.** The proxy receives requests at
   `/wire/<agent>/<provider>/<rest>`. Strip the prefix, look up the upstream
-  from `~/.agentfw/wire/routes.json`. Concatenate as strings — do NOT use
+  from `~/.afw/wire/routes.json`. Concatenate as strings — do NOT use
   `new URL(restPath, base)` (an absolute `restPath` clobbers the base path).
 - **Format-preserving edits.** Users' config files have comments and
   idiosyncratic formatting. Use AST editors (`jsonc-parser`, `yaml`
   Document API). Never parse-and-restringify.
-- **`agentfw-tap` cold start.** Spawned per MCP server. Keep its bundle
+- **`afw-tap` cold start.** Spawned per MCP server. Keep its bundle
   small — no heavy daemon code loaded.
 - **`wire` is architecture, not branding.** URL paths (`/wire/...`),
-  storage (`~/.agentfw/wire/...`), and the `wire`/`unwire` commands all use
+  storage (`~/.afw/wire/...`), and the `wire`/`unwire` commands all use
   `wire` — don't refactor it away.
 
 ### `references/`
@@ -212,12 +212,12 @@ never refactor them.
 
 ## Do not
 
-- Add a Tauri / Electron / native GUI app. agentfw is CLI + daemon +
+- Add a Tauri / Electron / native GUI app. afw is CLI + daemon +
   (optional) browser UI.
 - Switch the published artifact's runtime to Bun. The npm package must run
   on stock Node.
-- Rename the npm package away from `@openguardrails/agentfw` or the binaries
-  away from `agentfw` / `agentfw-tap` / `agentfw-tools` — they are the
+- Rename the npm package away from `openafw` or the binaries
+  away from `afw` / `afw-tap` / `afw-tools` — they are the
   user-facing contract.
 - Import from `references/` (including `references/openthomas/`).
 - Re-grow the old cost-saver metric surfaces (the "Thomas (T)" outcome

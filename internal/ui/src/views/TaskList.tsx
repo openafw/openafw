@@ -46,7 +46,7 @@ export function TaskList() {
       <div className="empty">
         <p>No tasks yet.</p>
         <p className="hint">
-          Run a wired agent (e.g. <code>agentfw claude</code>) and refresh. A task is one correlated
+          Run a wired agent (e.g. <code>afw claude</code>) and refresh. A task is one correlated
           conversation — its turns show up as runs inside.
         </p>
       </div>

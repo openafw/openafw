@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { Nav } from './components/Nav'
 import { Guard } from './views/Guard'
 import { Home } from './views/Home'
+import { Keys } from './views/Keys'
 import { Routing } from './views/Routing'
 import { RunDetail } from './views/RunDetail'
 import { See } from './views/See'
 import { TaskDetail } from './views/TaskDetail'
 import { InstanceDetail } from './views/see/InstanceDetail'
 
-export type NavSection = 'home' | 'see' | 'routing' | 'guard'
+export type NavSection = 'home' | 'see' | 'routing' | 'keys' | 'guard'
 
 export function App() {
   const [hash, setHash] = useState(window.location.hash)
@@ -30,9 +31,11 @@ export function App() {
       ? 'see'
       : /^#\/routing/.test(hash)
         ? 'routing'
-        : /^#\/guard/.test(hash)
-          ? 'guard'
-          : 'home'
+        : /^#\/keys/.test(hash)
+          ? 'keys'
+          : /^#\/guard/.test(hash)
+            ? 'guard'
+            : 'home'
 
   return (
     <div className="app">
@@ -48,6 +51,8 @@ export function App() {
           <See hash={hash} />
         ) : active === 'routing' ? (
           <Routing />
+        ) : active === 'keys' ? (
+          <Keys />
         ) : active === 'guard' ? (
           <Guard />
         ) : (

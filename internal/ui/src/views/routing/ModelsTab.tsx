@@ -25,7 +25,7 @@ const EMPTY_PROVIDER: ProviderForm = {
   apiKey: '',
 }
 
-// contextWindow 0 = unset (the common case — agentfw only needs it for the rare
+// contextWindow 0 = unset (the common case — afw only needs it for the rare
 // model whose real window is smaller than what the agent asks for, to clamp the
 // output budget).
 type ModelDraft = { id: string; input: Modality[]; window: number; showWindow: boolean }
@@ -447,7 +447,7 @@ export function ModelsTab() {
       <section className="home-section">
         <h2>Model providers</h2>
         <p className="hint">
-          An upstream agentfw can route to, and the models it serves. Add a provider, then give it
+          An upstream afw can route to, and the models it serves. Add a provider, then give it
           models — list its catalog or add them by hand. Providers and models discovered at wire
           time appear here automatically.
         </p>

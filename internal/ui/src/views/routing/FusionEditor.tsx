@@ -1,17 +1,31 @@
 import { useState } from 'react'
-import type { CombinationModel, ModelEntry, ProviderEntry, SwitchRule, ToolProvider } from '../../types'
+import type {
+  CombinationModel,
+  ModelEntry,
+  ProviderEntry,
+  SwitchRule,
+  ToolProvider,
+} from '../../types'
 
 type Ref = { modelId: string; providerId?: string }
-type Period = 'day' | 'month'
+// The UI exposes day/month plus the subscription 5-hour rolling window.
+type Period = 'day' | 'month' | '5h'
+// The limit that, once crossed, fails this member over to its fallback:
+//   tokens    — an absolute token cap (for api-key upstreams; we see the tokens)
+//   quota-pct — a % of the provider's own reported quota (for OAuth subscriptions
+//               like Claude/Codex, whose absolute budget is invisible)
+type LimitKind = 'none' | 'tokens' | 'quota-pct'
 
-// Editor-local panel member: model + optional failover (token cap / on-error →
-// fallback model). Flattened from the backend's {modelId, switchOn, fallback}.
+// Editor-local panel member: model + optional failover (a limit and/or on-error
+// → fallback model). Flattened from the backend's {modelId, switchOn, fallback}.
 type Member = {
   modelId: string
   providerId?: string
   fallback?: Ref
+  limitKind: LimitKind
   tokenLimit: number // 0 = no cap
   period: Period
+  usedPct: number // quota-pct threshold, 0 = unset
   onError: boolean
 }
 
@@ -27,15 +41,25 @@ function decodeRef(v: string): Ref {
   return { modelId, ...(providerId ? { providerId } : {}) }
 }
 
+// Map a stored period (`'day'|'month'|{rollingHours}`) to the editor's options.
+function toPeriod(p: unknown): Period {
+  if (p && typeof p === 'object' && 'rollingHours' in p) return '5h'
+  return p === 'month' ? 'month' : 'day'
+}
+
 // Hydrate an editor Member from a stored fusion panel member.
 function toMember(m: CombinationModel['panel'][number]): Member {
   const tokens = m.switchOn?.find((r) => r.kind === 'tokens')
+  const pct = m.switchOn?.find((r) => r.kind === 'quota-pct')
+  const limitKind: LimitKind = pct ? 'quota-pct' : tokens ? 'tokens' : 'none'
   return {
     modelId: m.modelId,
     ...(m.providerId ? { providerId: m.providerId } : {}),
     ...(m.fallback ? { fallback: m.fallback } : {}),
+    limitKind,
     tokenLimit: tokens && 'tokenLimit' in tokens ? tokens.tokenLimit : 0,
-    period: tokens && 'period' in tokens ? (tokens.period as Period) : 'day',
+    period: tokens && 'period' in tokens ? toPeriod(tokens.period) : '5h',
+    usedPct: pct && 'usedPct' in pct ? pct.usedPct : 0,
     onError: m.switchOn?.some((r) => r.kind === 'error') ?? true,
   }
 }
@@ -69,9 +93,18 @@ export function FusionEditor({
   const [synth, setSynth] = useState<string>(
     editing?.synthesizer ? encodeRef(editing.synthesizer) : '',
   )
+  const [cheap, setCheap] = useState<string>(
+    editing?.cheapModel ? encodeRef(editing.cheapModel) : '',
+  )
 
   const provName = (pid?: string) =>
     (pid && providers.find((p) => p.id === pid)?.label) || pid || '—'
+  // OAuth subscriptions (claude-code/codex) hide their absolute token budget, so
+  // a % cap is the sensible default for them; api-key providers get a token cap.
+  const isSubscription = (pid?: string) =>
+    !!pid && providers.find((p) => p.id === pid)?.auth?.kind === 'agent-oauth'
+  const defaultLimitKind = (pid?: string): LimitKind =>
+    isSubscription(pid) ? 'quota-pct' : 'tokens'
   const used = new Set(panel.map(memberKey))
   const available = models.filter((m) => !used.has(`${m.providerId}/${m.id}`))
   const visionModels = models.filter(isVision)
@@ -88,8 +121,12 @@ export function FusionEditor({
       panel: panel.map((m) => {
         const switchOn: SwitchRule[] = []
         if (m.fallback) {
-          if (m.tokenLimit > 0)
-            switchOn.push({ kind: 'tokens', tokenLimit: m.tokenLimit, period: m.period })
+          if (m.limitKind === 'tokens' && m.tokenLimit > 0) {
+            const period = m.period === '5h' ? { rollingHours: 5 } : m.period
+            switchOn.push({ kind: 'tokens', tokenLimit: m.tokenLimit, period })
+          } else if (m.limitKind === 'quota-pct' && m.usedPct > 0) {
+            switchOn.push({ kind: 'quota-pct', usedPct: m.usedPct })
+          }
           if (m.onError) switchOn.push({ kind: 'error' })
         }
         return {
@@ -103,6 +140,7 @@ export function FusionEditor({
       ...(webSearch ? { webSearch: { providerId: webSearch } } : {}),
       ...(judge ? { judge: decodeRef(judge) } : {}),
       ...(synth ? { synthesizer: decodeRef(synth) } : {}),
+      ...(cheap ? { cheapModel: decodeRef(cheap) } : {}),
     })
   }
 
@@ -175,30 +213,68 @@ export function FusionEditor({
                 {m.fallback ? (
                   <>
                     <label className="fusion-cap">
-                      <span className="dim">token cap</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={100000}
-                        placeholder="none"
-                        style={{ width: '7rem' }}
-                        disabled={busy}
-                        value={m.tokenLimit || ''}
-                        onChange={(e) =>
-                          updateMember(i, { tokenLimit: Number.parseInt(e.target.value, 10) || 0 })
-                        }
-                      />
-                    </label>
-                    <label className="fusion-cap">
+                      <span className="dim">switch when</span>
                       <select
                         disabled={busy}
-                        value={m.period}
-                        onChange={(e) => updateMember(i, { period: e.target.value as Period })}
+                        value={m.limitKind}
+                        onChange={(e) =>
+                          updateMember(i, { limitKind: e.target.value as LimitKind })
+                        }
                       >
-                        <option value="day">/ day</option>
-                        <option value="month">/ month</option>
+                        <option value="none">never (only on failure)</option>
+                        <option value="tokens">over token cap</option>
+                        <option value="quota-pct">over subscription %</option>
                       </select>
                     </label>
+                    {m.limitKind === 'tokens' ? (
+                      <>
+                        <label className="fusion-cap">
+                          <input
+                            type="number"
+                            min={0}
+                            step={100000}
+                            placeholder="tokens"
+                            style={{ width: '7rem' }}
+                            disabled={busy}
+                            value={m.tokenLimit || ''}
+                            onChange={(e) =>
+                              updateMember(i, {
+                                tokenLimit: Number.parseInt(e.target.value, 10) || 0,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="fusion-cap">
+                          <select
+                            disabled={busy}
+                            value={m.period}
+                            onChange={(e) => updateMember(i, { period: e.target.value as Period })}
+                          >
+                            <option value="5h">/ 5h</option>
+                            <option value="day">/ day</option>
+                            <option value="month">/ month</option>
+                          </select>
+                        </label>
+                      </>
+                    ) : null}
+                    {m.limitKind === 'quota-pct' ? (
+                      <label className="fusion-cap">
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          step={5}
+                          placeholder="80"
+                          style={{ width: '4.5rem' }}
+                          disabled={busy}
+                          value={m.usedPct || ''}
+                          onChange={(e) =>
+                            updateMember(i, { usedPct: Number.parseInt(e.target.value, 10) || 0 })
+                          }
+                        />
+                        <span className="dim">% of 5h quota used</span>
+                      </label>
+                    ) : null}
                     <label className="fusion-cap">
                       <input
                         type="checkbox"
@@ -220,7 +296,17 @@ export function FusionEditor({
               onChange={(e) => {
                 if (!e.target.value) return
                 const ref = decodeRef(e.target.value)
-                setPanel([...panel, { ...ref, tokenLimit: 0, period: 'day', onError: true }])
+                setPanel([
+                  ...panel,
+                  {
+                    ...ref,
+                    limitKind: defaultLimitKind(ref.providerId),
+                    tokenLimit: 0,
+                    period: '5h',
+                    usedPct: 0,
+                    onError: true,
+                  },
+                ])
               }}
             >
               <option value="">+ add panel model…</option>
@@ -241,8 +327,8 @@ export function FusionEditor({
         <span className="combo-label">
           Multimodal
           <div className="dim">
-            one model that describes images for any text-only panel member — skip it if the panel
-            is already multimodal
+            one model that describes images for any text-only panel member — skip it if the panel is
+            already multimodal
           </div>
         </span>
         <select disabled={busy} value={vision} onChange={(e) => setVision(e.target.value)}>
@@ -297,6 +383,20 @@ export function FusionEditor({
         </span>
         <select disabled={busy} value={judge} onChange={(e) => setJudge(e.target.value)}>
           <option value="">default — same model as the synthesizer</option>
+          {modelOptions}
+        </select>
+      </div>
+
+      <div className="combo-row">
+        <span className="combo-label">
+          Cheap model
+          <div className="dim">
+            For the simple, high-volume work routed here — Claude Code subagents and hermes/openclaw
+            cron jobs. These skip the panel and go straight to this one model.
+          </div>
+        </span>
+        <select disabled={busy} value={cheap} onChange={(e) => setCheap(e.target.value)}>
+          <option value="">none — every request runs the full fusion</option>
           {modelOptions}
         </select>
       </div>

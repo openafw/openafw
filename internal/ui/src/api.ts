@@ -1,19 +1,23 @@
 import type {
+  AccessKeyItem,
   AgentInstanceDetail,
   AgentInstanceItem,
+  KeyConnection,
+  KeysResponse,
   MaskingResponse,
   McpServerItem,
   PolicyResponse,
   Registry,
   RiskPage,
-  SkillItem,
   RoutingTarget,
   RunDetail,
   RunListItem,
   SearchBackend,
+  SkillItem,
+  SubagentDowngrade,
   TaskDetail,
   TaskListItem,
-  SubagentDowngrade,
+  TiersResponse,
   ToolProvidersResponse,
   WireStatus,
 } from './types'
@@ -108,6 +112,45 @@ export async function fetchWireStatus(): Promise<WireStatus> {
 
 export async function fetchRegistry(): Promise<Registry> {
   return getJson<Registry>('/api/routing/registry')
+}
+
+// ── tiers: the three fixed model names ─────────────────────────────
+
+export async function fetchTiers(): Promise<TiersResponse> {
+  return getJson<TiersResponse>('/api/tiers')
+}
+
+export async function setTier(tier: string, target: RoutingTarget): Promise<void> {
+  await send('POST', '/api/tiers', { tier, target })
+}
+
+export async function unsetTier(tier: string): Promise<void> {
+  await send('DELETE', `/api/tiers?tier=${encodeURIComponent(tier)}`)
+}
+
+// ── keys: afw API auth tokens ──────────────────────────────────
+
+export async function fetchKeys(): Promise<KeysResponse> {
+  return getJson<KeysResponse>('/api/keys')
+}
+
+export async function createKey(
+  label: string,
+): Promise<{ key: AccessKeyItem; connection: KeyConnection }> {
+  const r = await fetch('/api/keys', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ label }),
+  })
+  if (!r.ok) {
+    const err = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err.error ?? `HTTP ${r.status}`)
+  }
+  return (await r.json()) as { key: AccessKeyItem; connection: KeyConnection }
+}
+
+export async function revokeKey(id: string): Promise<void> {
+  await send('DELETE', `/api/keys?id=${encodeURIComponent(id)}`)
 }
 
 export async function fetchPolicy(): Promise<PolicyResponse> {
@@ -215,13 +258,20 @@ export async function saveCombo(combo: {
   panel: {
     modelId: string
     providerId?: string
-    switchOn?: { kind: string; tokenLimit?: number; usdLimit?: number; period?: string }[]
+    switchOn?: {
+      kind: string
+      tokenLimit?: number
+      usdLimit?: number
+      usedPct?: number
+      period?: 'day' | 'month' | { rollingHours: number }
+    }[]
     fallback?: { modelId: string; providerId?: string }
   }[]
   vision?: { modelId: string; providerId?: string }
   webSearch?: { providerId?: string }
   judge?: { modelId: string; providerId?: string }
   synthesizer?: { modelId: string; providerId?: string }
+  cheapModel?: { modelId: string; providerId?: string }
 }): Promise<void> {
   await send('POST', '/api/routing/combo', combo)
 }

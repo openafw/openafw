@@ -48,9 +48,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <span>·</span>
           <span>{r.status}</span>
           <span>·</span>
-          <span>
-            model: {r.model ? <code>{r.model}</code> : <span className="muted">—</span>}
-          </span>
+          <span>model: {r.model ? <code>{r.model}</code> : <span className="muted">—</span>}</span>
           <span>·</span>
           <span>
             <Time ms={r.startedAt} />
@@ -124,9 +122,7 @@ function RunErrors({ actions }: { actions: ActionSummary[] }) {
   // came back 200), the run actually completed — the errored attempt was
   // recovered, not a failure. Surface that so a recovered run doesn't read as
   // broken next to the model that actually served it.
-  const recoverer = calls.find(
-    (c) => !isErroredCall(c.p) && c.p.orchestration?.role === 'failover',
-  )
+  const recoverer = calls.find((c) => !isErroredCall(c.p) && c.p.orchestration?.role === 'failover')
   const lastClean = !isErroredCall(calls[calls.length - 1]!.p)
   const recovered = recoverer != null || (lastClean && errors.length < calls.length)
   const recoveredModel = recoverer?.p.model ?? calls[calls.length - 1]?.p.model
@@ -170,7 +166,7 @@ function RunErrors({ actions }: { actions: ActionSummary[] }) {
   )
 }
 
-// agentfw measures usage in tokens, not dollars. This splits the run's
+// afw measures usage in tokens, not dollars. This splits the run's
 // total token throughput (input + output) by action kind so you can see
 // where the context budget went.
 function TokenBreakdown({ actions }: { actions: ActionSummary[] }) {

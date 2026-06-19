@@ -36,7 +36,7 @@ jobs:
         if: github.event_name == 'release'
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          PKG_VERSION="v$(node -p "require('./packages/agentfw/package.json').version")"
+          PKG_VERSION="v$(node -p "require('./packages/afw/package.json').version")"
           if [ "$TAG" != "$PKG_VERSION" ]; then
             echo "::error::Release tag $TAG does not match package version $PKG_VERSION"
             exit 1
@@ -54,10 +54,10 @@ jobs:
 
       - name: Check if version already on npm
         id: check
-        working-directory: packages/agentfw
+        working-directory: packages/afw
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "@openguardrails/agentfw@$VERSION" version 2>/dev/null; then
+          if npm view "openafw@$VERSION" version 2>/dev/null; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version $VERSION already on npm — skipping publish step"
           else
@@ -67,7 +67,7 @@ jobs:
 
       - name: Publish to npm with provenance
         if: steps.check.outputs.already_published == 'false'
-        working-directory: packages/agentfw
+        working-directory: packages/afw
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -18,7 +18,7 @@ const slug = (s: string) =>
 
 // The credential-masking control panel on the Guard page. Masking is opt-in and
 // configured per provider (registry provider id): pick a provider, then turn on
-// the credential types to de-identify. When a rule is on, agentfw swaps that
+// the credential types to de-identify. When a rule is on, afw swaps that
 // credential for a real-looking fake before the request reaches that provider,
 // and restores the real value in the response — so the provider (or an API
 // relay) never sees it, while the agent keeps working with the real key. The

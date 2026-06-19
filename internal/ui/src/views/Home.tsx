@@ -68,7 +68,7 @@ export function Home() {
     if (e.drifted) driftByAgent.set(e.agent, true)
   }
 
-  // The task that has moved the most tokens through the wire. agentfw ranks
+  // The task that has moved the most tokens through the wire. afw ranks
   // by tokens, not dollars — it does not price traffic.
   const heaviestTask = tasks.reduce<TaskListItem | null>(
     (top, t) => (top == null || totalTokens(t) > totalTokens(top) ? t : top),
@@ -78,7 +78,7 @@ export function Home() {
   return (
     <div className="home">
       <section className="home-hero">
-        <h1>agentfw</h1>
+        <h1>afw</h1>
         <p className="home-sub">
           An AI agent firewall on the wire. Every call your agents make is captured here —
           <strong> see</strong> it, <strong>route</strong> it to the model you pick, and
@@ -129,8 +129,8 @@ export function Home() {
           <div className="empty">
             <p>No agents wired yet.</p>
             <p className="hint">
-              Launch one through agentfw — e.g. <code>agentfw claude</code>. agentfw never edits the
-              agent's own config; it taps the wire per launch.
+              Launch one through afw — e.g. <code>afw claude</code>. afw never edits the agent's own
+              config; it taps the wire per launch.
             </p>
           </div>
         ) : (

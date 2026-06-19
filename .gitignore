@@ -7,9 +7,9 @@ references/
 
 # Per-package copies of root docs, refreshed by `npm run prepack` before
 # publish. Single source of truth lives at the repo root.
-packages/agentfw/LICENSE
-packages/agentfw/README.md
-packages/agentfw/PRIVACY.md
+packages/afw/LICENSE
+packages/afw/README.md
+packages/afw/PRIVACY.md
 
 # macOS
 .DS_Store
@@ -56,8 +56,8 @@ coverage/
 # Stray local build / runtime artifacts (not the published `dist/`)
 dist-runtime/
 
-# Local dev playground (e.g. test runs against fake ~/.agentfw)
-.agentfw-dev/
+# Local dev playground (e.g. test runs against fake ~/.afw)
+.afw-dev/
 
 # Stray local assets / scratch images
 *.scratch.png

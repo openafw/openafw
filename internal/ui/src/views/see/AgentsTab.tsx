@@ -33,7 +33,7 @@ export function AgentsTab() {
       <div className="empty">
         <p>No agent instances yet.</p>
         <p className="hint">
-          Populated from new traffic. Launch a wired agent (e.g. <code>agentfw claude</code>) — each
+          Populated from new traffic. Launch a wired agent (e.g. <code>afw claude</code>) — each
           running instance shows up here with the MCP servers, skills, and tools it used.
         </p>
       </div>

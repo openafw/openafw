@@ -1,4 +1,4 @@
-# agentfw
+# afw
 
 > The local firewall for AI agents: route and repair them, and keep your
 > secrets off the model, the API relay, and the supply chain.
@@ -7,7 +7,7 @@
 — practical features and security in one place, no framework and no
 telemetry.**
 
-`agentfw` taps the wire between your coding agents (Claude Code, Codex,
+`afw` taps the wire between your coding agents (Claude Code, Codex,
 OpenClaw, Hermes, Claude Desktop — anything that calls an LLM or speaks MCP)
 and the providers they reach. From that one vantage point it does useful work
 *and* keeps the traffic safe, without switching agents, adopting a framework,
@@ -56,7 +56,7 @@ into the typosquatted `pip install reqeusts` (an attacker-owned package). Over
 6% misbehaved — and several triggered only after ~50 requests or only under an
 agent's auto-execute (YOLO) mode, so a sandbox spot-check can't clear them.
 
-`agentfw` sits between your agent and both. It's local — no account, no cloud —
+`afw` sits between your agent and both. It's local — no account, no cloud —
 and it sees the decoded request and response of every call, so it can strip your
 secrets out before they reach the upstream (masking keeps the real values on
 your machine) and run detectors over what comes back.
@@ -77,7 +77,7 @@ your machine) and run detectors over what comes back.
 - **Model routing & combination.** Point any agent's traffic at any model, with
   failover chains and capability companions. The flagship case: Claude Code
   [Dynamic Workflows][dw] spawn *tens to hundreds of parallel subagents* that
-  all inherit the session model (Opus 4.8). `agentfw` tells the planner from the
+  all inherit the session model (Opus 4.8). `afw` tells the planner from the
   workers **on the wire, exactly** — the planner always carries the
   orchestrator-only `Agent` tool; subagents never do — and routes only the
   workers to a cheaper model. Verified 100% on 672 real calls; the planner is
@@ -85,7 +85,7 @@ your machine) and run detectors over what comes back.
 - **Security detectors.** A pipeline runs over every decoded packet: secret-leak
   and dangerous-shell detection today. (The tool-result
   indirect-prompt-injection detector is kept but gated.)
-- **Agent-aware config handling.** `agentfw` understands Hermes, OpenClaw, and
+- **Agent-aware config handling.** `afw` understands Hermes, OpenClaw, and
   Codex config formats and edits them format-preservingly (YAML / JSONC / TOML
   AST, comments intact) with per-edit backups — the foundation for spotting and
   repairing a setup a bad upgrade left unstartable.
@@ -101,40 +101,40 @@ tool-allowlist policies.
 ## Quick start
 
 ```bash
-npm install -g @openguardrails/agentfw
+npm install -g openafw
 
-# CLI agents — launch them through agentfw (this instance only, no global change):
-agentfw claude            # or: agentfw codex
-agentfw claude --model claude-sonnet-4-6 -- -p "…"   # route this dir to a model
+# CLI agents — launch them through afw (this instance only, no global change):
+afw claude            # or: afw codex
+afw claude --model claude-sonnet-4-6 -- -p "…"   # route this dir to a model
 
-# App / daemon agents — print setup steps, agentfw edits nothing:
-agentfw claude-desktop    # or: agentfw openclaw / agentfw hermes
-agentfw model add         # register the upstreams agentfw can route to
-agentfw status            # daemon + tap health
+# App / daemon agents — print setup steps, afw edits nothing:
+afw claude-desktop    # or: afw openclaw / afw hermes
+afw model add         # register the upstreams afw can route to
+afw status            # daemon + tap health
 ```
 
-agentfw never rewrites an agent's shared config. CLI agents are *launched* with a
+afw never rewrites an agent's shared config. CLI agents are *launched* with a
 per-process override; app/daemon agents you point at the wire yourself. No
 accounts, no telemetry, no cloud — your traffic and traces stay on your machine.
 See [`PRIVACY.md`](./PRIVACY.md) and [`docs/cli.md`](./docs/cli.md).
 
-## Keep your agents — agentfw wraps the wire, not the agent
+## Keep your agents — afw wraps the wire, not the agent
 
-You do **not** rewrite anything or adopt a framework. agentfw never edits an
+You do **not** rewrite anything or adopt a framework. afw never edits an
 agent's shared config; how you connect depends on the agent's runtime form:
 
 | Agent | Form | How to connect |
 |---|---|---|
-| Claude Code | CLI | `agentfw claude` — per-instance launch; subagent model routing (Dynamic Workflows) + per-route routing + detectors |
-| Codex | CLI | `agentfw codex` — per-instance launch + per-route routing + detectors |
-| Claude Desktop | App | `agentfw claude-desktop` — printed GUI setup steps |
-| OpenClaw | Daemon | `agentfw openclaw` — point its model base URL at the wire |
-| Hermes | Daemon | `agentfw hermes` — point its model base URL at the wire |
-| Cursor / Gemini CLI | Manual | `agentfw cursor` / `agentfw gemini` — point the base URL at the wire |
+| Claude Code | CLI | `afw claude` — per-instance launch; subagent model routing (Dynamic Workflows) + per-route routing + detectors |
+| Codex | CLI | `afw codex` — per-instance launch + per-route routing + detectors |
+| Claude Desktop | App | `afw claude-desktop` — printed GUI setup steps |
+| OpenClaw | Daemon | `afw openclaw` — point its model base URL at the wire |
+| Hermes | Daemon | `afw hermes` — point its model base URL at the wire |
+| Cursor / Gemini CLI | Manual | `afw cursor` / `afw gemini` — point the base URL at the wire |
 
 ## Privacy
 
-`agentfw` runs as a single local daemon. It never phones home, sends no
+`afw` runs as a single local daemon. It never phones home, sends no
 telemetry, and forwards your agent's traffic only to the provider your agent
 already calls — and nowhere else. The one sanctioned outbound call is a daily
 version check against the public npm registry, which carries no data and is

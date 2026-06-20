@@ -1,14 +1,16 @@
-// Codex subscription auth. Codex's ChatGPT login (`codex login`) stores an
-// OAuth token set in ~/.codex/auth.json under `tokens`. afw reads that
-// token to authenticate routes targeting Codex's OpenAI provider, and
-// refreshes it when near expiry.
+// OpenAI (ChatGPT/Codex) subscription auth. afw runs its OWN OAuth login
+// (`afw oauth login openai`) and stores the resulting token set in its own
+// store at ~/.afw/oauth/codex.json (the same `{tokens, last_refresh}` shape
+// Codex uses) — it deliberately does NOT read ~/.codex/auth.json. afw reads its
+// own token to authenticate routes targeting the OpenAI subscription provider,
+// and refreshes it when near expiry.
 //
-// Refresh tokens are single-use: the rotated token is written back to
-// auth.json so Codex picks it up on its next read instead of failing with
-// refresh_token_reused — afw is a cooperative co-refresher.
+// Refresh tokens are single-use: the rotated token is written back to afw's own
+// store so the next read picks it up instead of failing with
+// refresh_token_reused.
 //
-// The refresh call goes to auth.openai.com — the same identity provider
-// Codex itself calls to refresh the same token. See PRIVACY.md.
+// The refresh call goes to auth.openai.com — the same identity provider the
+// login flow used. See PRIVACY.md.
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -160,7 +162,7 @@ export async function getCodexToken(): Promise<OAuthToken> {
   if (inflight) return inflight
   inflight = (async () => {
     const lockPath = join(paths.home, 'oauth-codex.lock')
-    const resolved = await withFileLock(lockPath, () => resolveCodexToken(paths.agent.codex.auth))
+    const resolved = await withFileLock(lockPath, () => resolveCodexToken(paths.oauth.codex))
     cache = resolved
     return resolved
   })().finally(() => {

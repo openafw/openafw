@@ -166,6 +166,14 @@ export async function handlePostProvider(c: Context): Promise<Response> {
   let auth: ProviderAuth
   if (authKind === 'passthrough') {
     auth = { kind: 'passthrough' }
+  } else if (authKind === 'agent-oauth') {
+    // afw-owned subscription login: the token lives in afw's own OAuth store
+    // (~/.afw/oauth/), refreshed at request time. No secret to persist here.
+    const agent = body.agent
+    if (agent !== 'claude-code' && agent !== 'codex') {
+      return c.json({ error: 'agent-oauth requires agent "claude-code" or "codex"' }, 400)
+    }
+    auth = { kind: 'agent-oauth', agent }
   } else if (authKind === 'bearer' || authKind === 'api-key') {
     const valueRef = `provider:${id}`
     // why: only persist the key when the form actually carried one — editing
@@ -181,7 +189,7 @@ export async function handlePostProvider(c: Context): Promise<Response> {
       auth = { kind: 'api-key', header, valueRef }
     }
   } else {
-    return c.json({ error: 'authKind must be passthrough, bearer, or api-key' }, 400)
+    return c.json({ error: 'authKind must be passthrough, agent-oauth, bearer, or api-key' }, 400)
   }
 
   const provider: ProviderEntry = {

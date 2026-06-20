@@ -41,6 +41,15 @@ export const paths = {
   models: join(AFW_HOME, 'models.json'),
   routing: join(AFW_HOME, 'routing.json'),
   secrets: join(AFW_HOME, 'secrets.json'),
+  // afw's OWN OAuth token store. afw runs its own subscription logins
+  // (`afw oauth login …`) and persists the resulting tokens here — it never
+  // reads or writes Claude Code's Keychain / Codex's auth.json. The orchestrator
+  // reads + co-refreshes these at request time. See cli/oauth/ + daemon/orchestrator/oauth/.
+  oauth: {
+    dir: join(AFW_HOME, 'oauth'),
+    claudeCode: join(AFW_HOME, 'oauth', 'claude-code.json'),
+    codex: join(AFW_HOME, 'oauth', 'codex.json'),
+  },
   // afw-issued API keys — auth tokens a generic OpenAI/Anthropic-compatible
   // agent presents to the /v1 wire. See core/access-keys.ts.
   keys: join(AFW_HOME, 'keys.json'),

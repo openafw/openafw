@@ -154,8 +154,9 @@ export function withoutServerTools(body: Record<string, unknown>): Record<string
  *  leaves the client's own headers intact; otherwise every auth header the
  *  client may have sent is dropped before the configured one is injected.
  *  `agent-oauth` providers inject a subscription token afw reads — and
- *  co-refreshes — from the owning agent's own credential store. `id` is
- *  used purely for log labelling (provider id or route key). */
+ *  co-refreshes — from afw's OWN OAuth store (~/.afw/oauth/), populated by
+ *  `afw oauth login`; afw never reads the agent's own credential store. `id`
+ *  is used purely for log labelling (provider id or route key). */
 export async function applyAuth(headers: Headers, auth: ProviderAuth, id: string): Promise<void> {
   if (auth.kind === 'passthrough') return
 

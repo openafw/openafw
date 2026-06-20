@@ -11,7 +11,6 @@ import { parse as parseYaml } from 'yaml'
 import type { AgentId } from '../../core/agent.ts'
 import { paths } from '../../core/paths.ts'
 import type { DecoderKind, RouteAuth } from '../../core/routes.ts'
-import { claudeCodeOAuthAvailable } from '../../daemon/orchestrator/oauth/claude-code.ts'
 import { parseJsonc } from '../rewrite/jsonc.ts'
 import { routeKeyForModel } from '../wire/url.ts'
 import type { PlannedEndpoint } from './types.ts'
@@ -126,7 +125,6 @@ export function resolveSecretInput(raw: unknown, env: Record<string, string>): s
 export async function captureClaudeCodeCredentials(opts?: {
   settingsPath?: string
   legacyPath?: string
-  oauthProbe?: () => Promise<boolean>
 }): Promise<Map<string, CapturedCredential>> {
   const out = new Map<string, CapturedCredential>()
   const settings = await readJsonFile<{ env?: Record<string, unknown> }>(
@@ -157,16 +155,10 @@ export async function captureClaudeCodeCredentials(opts?: {
       auth: { kind: 'api-key', header: 'x-api-key' },
       value: primary,
     })
-    return out
   }
-
-  // No static key — fall back to subscription OAuth when Claude Code is
-  // logged in via Claude.ai. The token is read + refreshed at request time
-  // from the agent's own credential store, never copied here.
-  const oauthProbe = opts?.oauthProbe ?? claudeCodeOAuthAvailable
-  if (await oauthProbe()) {
-    out.set('anthropic', { auth: { kind: 'agent-oauth', agent: 'claude-code' } })
-  }
+  // No subscription auto-adoption: afw never reads Claude Code's Claude.ai
+  // login. To route through a subscription, the user logs in to afw itself
+  // (`afw oauth login anthropic`), which stores afw's own token.
   return out
 }
 
@@ -185,13 +177,10 @@ export async function captureCodexCredentials(opts?: {
   const key = typeof auth?.OPENAI_API_KEY === 'string' ? auth.OPENAI_API_KEY.trim() : ''
   if (key !== '') {
     out.set('openai', { auth: { kind: 'bearer' }, value: key })
-    return out
   }
-  // No static key — ChatGPT-subscription mode. The token is read +
-  // refreshed at request time from auth.json, never copied here.
-  if (auth?.auth_mode === 'chatgpt' && isObj(auth.tokens)) {
-    out.set('openai', { auth: { kind: 'agent-oauth', agent: 'codex' } })
-  }
+  // No subscription auto-adoption: afw never reads Codex's ChatGPT login from
+  // ~/.codex/auth.json. To route through a subscription, the user logs in to
+  // afw itself (`afw oauth login openai`), which stores afw's own token.
   return out
 }
 

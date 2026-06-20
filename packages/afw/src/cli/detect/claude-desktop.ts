@@ -109,19 +109,20 @@ export const claudeDesktopDetector: Detector = {
 
     // why: Claude Desktop's UI accepts only an sk-ant-* shaped placeholder
     // because of client-side format validation — the real credential has
-    // to come from afw. The user's already-wired Claude Code is the
-    // natural source: same provider, same auth shape. agent-oauth reuses
-    // the live token; api-key/bearer copies the value into a afw-owned
-    // secret keyed for the claude-desktop route.
+    // to come from afw. The user's already-wired Claude Code is the natural
+    // source for a *static* Anthropic key (copied into a afw-owned secret keyed
+    // for the claude-desktop route). For a Claude.ai subscription the user logs
+    // in to afw itself (`afw oauth login anthropic`) — afw never reads the
+    // agent's own login.
     const ccCred = (await captureClaudeCodeCredentials()).get('anthropic')
     if (ccCred) {
       endpoints[0]!.auth = ccCred.auth
     } else {
       caveats.push(
-        'no Anthropic credential found via claude-code — wire claude-code first ' +
-          '(e.g. set ANTHROPIC_API_KEY in ~/.claude/settings.json env, or sign ' +
-          'in to Claude.ai via `claude /login`). Until then, Claude Desktop ' +
-          'requests will be rejected by Anthropic with 401.',
+        'no Anthropic API key found via claude-code — set ANTHROPIC_API_KEY in ' +
+          '~/.claude/settings.json env, or run `afw oauth login anthropic` to route ' +
+          'through a Claude.ai subscription. Until then, Claude Desktop requests ' +
+          'will be rejected by Anthropic with 401.',
       )
     }
 
@@ -159,8 +160,8 @@ export const claudeDesktopDetector: Detector = {
     }
 
     // Persist the static credential value (if any) under this route's key
-    // so the proxy can read it at request time. agent-oauth carries no
-    // value — the orchestrator reads claude-code's live OAuth token instead.
+    // so the proxy can read it at request time. An agent-oauth route carries
+    // no value — the orchestrator reads afw's own OAuth token instead.
     const secrets: { ref: string; value: string }[] = []
     const ccCred = (await captureClaudeCodeCredentials()).get('anthropic')
     if (ccCred?.value !== undefined) {

@@ -1,5 +1,6 @@
 import process from 'node:process'
 import { createInterface } from 'node:readline/promises'
+import { interactiveSelect } from './select.ts'
 
 /**
  * Ask a yes/no question on the terminal. Returns `defaultYes` on empty input
@@ -44,6 +45,10 @@ export async function promptChoice<T extends string>(
 ): Promise<T> {
   const first = choices[0] as T
   if (!process.stdin.isTTY) return first
+  // Prefer the arrow-key selector; fall back to numbered entry when raw-mode
+  // keypress reading isn't available.
+  const picked = await interactiveSelect(question, choices, { multi: false })
+  if (picked) return choices[picked[0] as number] as T
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
     for (;;) {
@@ -56,6 +61,57 @@ export async function promptChoice<T extends string>(
       }
       const byName = choices.find((c) => c === answer)
       if (byName) return byName
+    }
+  } finally {
+    rl.close()
+  }
+}
+
+/**
+ * Ask the user to pick zero or more of `choices`. Accepts a comma/space list of
+ * 1-based indices and ranges (`1,3` / `1 3` / `2-5`), or the word `all`. Empty
+ * input selects nothing. Non-interactive (no TTY) returns `[]` so scripted runs
+ * never block. Returns the chosen values in `choices` order, de-duplicated.
+ */
+export async function promptMultiChoice<T extends string>(
+  question: string,
+  choices: readonly T[],
+): Promise<T[]> {
+  if (!process.stdin.isTTY || choices.length === 0) return []
+  const picked = await interactiveSelect(question, choices, { multi: true })
+  if (picked) return choices.filter((_, i) => picked.includes(i))
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    for (;;) {
+      const list = choices.map((c, i) => `  ${i + 1}) ${c}`).join('\n')
+      const answer = (
+        await rl.question(`${question}\n${list}\n(e.g. 1,3 or 2-4 or 'all'; blank for none) `)
+      ).trim()
+      if (answer === '') return []
+      if (answer.toLowerCase() === 'all') return [...choices]
+      const picked = new Set<number>()
+      let bad = false
+      for (const tok of answer.split(/[\s,]+/).filter(Boolean)) {
+        const range = tok.match(/^(\d+)-(\d+)$/)
+        if (range) {
+          const lo = Number.parseInt(range[1]!, 10)
+          const hi = Number.parseInt(range[2]!, 10)
+          if (lo < 1 || hi > choices.length || lo > hi) {
+            bad = true
+            break
+          }
+          for (let i = lo; i <= hi; i++) picked.add(i - 1)
+          continue
+        }
+        const n = Number.parseInt(tok, 10)
+        if (!Number.isInteger(n) || n < 1 || n > choices.length) {
+          bad = true
+          break
+        }
+        picked.add(n - 1)
+      }
+      if (bad) continue
+      return choices.filter((_, i) => picked.has(i))
     }
   } finally {
     rl.close()

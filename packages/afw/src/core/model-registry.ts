@@ -39,9 +39,10 @@ export type ProviderAuth =
   | { kind: 'api-key'; header: string; valueRef: string }
   // Inject `Authorization: Bearer <secret>`.
   | { kind: 'bearer'; valueRef: string }
-  // Inject a subscription OAuth token afw reads — and refreshes — from
-  // the owning agent's own credential store (Keychain / auth.json). The
-  // token is never copied into secrets.json.
+  // Inject a subscription OAuth token afw reads — and refreshes — from afw's
+  // OWN OAuth store (~/.afw/oauth/), populated by `afw oauth login`. afw never
+  // reads the agent's own credential store, and the token is never copied into
+  // secrets.json.
   | { kind: 'agent-oauth'; agent: 'claude-code' | 'codex' }
   // Reuse the client agent's own auth header verbatim (same-provider routing).
   | { kind: 'passthrough' }

@@ -141,28 +141,24 @@ describe('captureClaudeCodeCredentials', () => {
     expect(out.get('anthropic')?.value).toBe('sk-legacy')
   })
 
-  it('captures nothing when no static key and Claude.ai is not logged in', async () => {
+  it('captures nothing when there is no static key', async () => {
     const settings = join(dir, 'settings.json')
     await writeFile(settings, JSON.stringify({ env: {} }))
     const out = await captureClaudeCodeCredentials({
       settingsPath: settings,
       legacyPath: join(dir, 'absent.json'),
-      oauthProbe: async () => false,
     })
     expect(out.size).toBe(0)
   })
 
-  it('captures subscription OAuth when no static key but Claude.ai is logged in', async () => {
+  it('does not auto-adopt the Claude.ai subscription — afw never reads it', async () => {
     const settings = join(dir, 'settings.json')
     await writeFile(settings, JSON.stringify({ env: {} }))
     const out = await captureClaudeCodeCredentials({
       settingsPath: settings,
       legacyPath: join(dir, 'absent.json'),
-      oauthProbe: async () => true,
     })
-    expect(out.get('anthropic')).toEqual({
-      auth: { kind: 'agent-oauth', agent: 'claude-code' },
-    })
+    expect(out.has('anthropic')).toBe(false)
   })
 })
 
@@ -182,7 +178,7 @@ describe('captureCodexCredentials', () => {
     expect(out.get('openai')).toEqual({ auth: { kind: 'bearer' }, value: 'sk-oai' })
   })
 
-  it('captures ChatGPT-subscription mode as an agent-oauth credential', async () => {
+  it('does not auto-adopt the ChatGPT subscription — afw never reads it', async () => {
     const auth = join(dir, 'auth.json')
     await writeFile(
       auth,
@@ -192,7 +188,7 @@ describe('captureCodexCredentials', () => {
       }),
     )
     const out = await captureCodexCredentials({ authPath: auth })
-    expect(out.get('openai')).toEqual({ auth: { kind: 'agent-oauth', agent: 'codex' } })
+    expect(out.has('openai')).toBe(false)
   })
 })
 

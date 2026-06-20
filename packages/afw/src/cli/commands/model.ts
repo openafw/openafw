@@ -8,9 +8,17 @@ import process from 'node:process'
 import { Command } from 'commander'
 import { logger } from '../../core/logger.ts'
 import type { ModelApi, ModelEntry, ProviderEntry } from '../../core/model-registry.ts'
+import { type CatalogProvider, PROVIDER_CATALOG } from '../../core/provider-catalog.ts'
 import { ensureDaemonRunning } from '../launch/daemon-autostart.ts'
+import { oauthLogin } from '../oauth/login.ts'
 import { daemonFetch } from '../util/daemon-client.ts'
-import { confirmYesNo, promptChoice, promptSecret, promptText } from '../util/prompt.ts'
+import {
+  confirmYesNo,
+  promptChoice,
+  promptMultiChoice,
+  promptSecret,
+  promptText,
+} from '../util/prompt.ts'
 import { modelRm, modelSet, providerCmd, secretCmd } from './route.ts'
 
 type ApiCompat = 'openai-chat' | 'openai-responses' | 'anthropic'
@@ -108,11 +116,151 @@ function providerIdFromUrl(baseUrl: string): string {
   }
 }
 
+/** One model staged for registration. Catalog models carry their known
+ *  metadata; hand-typed ids default to text-only (the user can flip vision +
+ *  context later via `afw route model` or the dashboard). */
+type PendingModel = {
+  id: string
+  label?: string
+  vision: boolean
+  contextWindow?: number
+  maxTokens?: number
+}
+
+type PendingProvider = {
+  baseUrl: string
+  api: ApiCompat | 'auto'
+  key: string
+  providerId: string
+  label?: string
+  models: PendingModel[]
+}
+
+const CUSTOM_PROVIDER_LABEL = 'Custom — enter a base URL manually'
+
 /** Run the interactive provider wizard once. Returns the registered provider
  *  id and its model ids on success, or null when the user skipped it. Exported
- *  so the first-run onboarding flow can reuse the exact same prompts + probe. */
+ *  so the first-run onboarding flow can reuse the exact same prompts + probe.
+ *
+ *  Starts from a curated catalog of well-known providers (base URL + wire
+ *  format + known models pre-filled) so the common case is a couple of menu
+ *  picks; "Custom" drops to the manual base-URL flow for anything not listed. */
 export async function addOneProvider(): Promise<{ providerId: string; modelIds: string[] } | null> {
-  let baseUrl = await promptText('Provider base URL (e.g. https://api.openai.com/v1)')
+  // Non-interactive runs can't pick from a menu — keep the old manual flow,
+  // which returns null on the empty base-URL prompt so scripts never block.
+  if (!process.stdin.isTTY) return addCustomProvider()
+
+  const labels = [...PROVIDER_CATALOG.map((p) => p.label), CUSTOM_PROVIDER_LABEL]
+  const choice = await promptChoice('Which model provider?', labels)
+  if (choice === CUSTOM_PROVIDER_LABEL) return addCustomProvider()
+  const preset = PROVIDER_CATALOG.find((p) => p.label === choice)
+  return preset ? addCatalogProvider(preset) : addCustomProvider()
+}
+
+/** Catalog path: provider host + wire format are known, so we only ask which
+ *  models to enable (multi-select from the known list, plus any extra ids) and
+ *  for the API key. */
+async function addCatalogProvider(
+  preset: CatalogProvider,
+): Promise<{ providerId: string; modelIds: string[] } | null> {
+  logger.print(`\n${preset.label} — ${preset.baseUrl}`)
+  const models: PendingModel[] = []
+
+  if (preset.models.length > 0) {
+    const labels = preset.models.map((m) => `${m.label}  (${m.id})`)
+    const chosen = await promptMultiChoice('Select models to enable', labels)
+    for (const lbl of chosen) {
+      const m = preset.models[labels.indexOf(lbl)]
+      if (m) {
+        models.push({
+          id: m.id,
+          label: m.label,
+          vision: m.vision === true,
+          ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+          ...(m.maxTokens ? { maxTokens: m.maxTokens } : {}),
+        })
+      }
+    }
+  }
+
+  // Always allow adding ids not in the catalog — and it's the only way to add a
+  // model for catalog entries (like OpenRouter) that pin no preset models.
+  for (;;) {
+    const id = await promptText(
+      models.length === 0 ? 'Model id' : 'Add another model id (blank to finish)',
+    )
+    if (!id) break
+    models.push({ id, vision: false })
+  }
+  if (models.length === 0) {
+    logger.print('  (no models selected — skipping)')
+    return null
+  }
+
+  // Offer an OAuth subscription login where the provider supports it. afw runs
+  // its own login and stores its own token — it never reads the agent's creds.
+  if (preset.oauthKey) {
+    const apiKeyLabel = 'API key'
+    const oauthLabel = 'Log in with your subscription (OAuth — afw stores its own token)'
+    const method = await promptChoice(`How should afw authenticate to ${preset.label}?`, [
+      oauthLabel,
+      apiKeyLabel,
+    ] as const)
+    if (method === oauthLabel) return registerOAuthProvider(preset, models)
+  }
+
+  const key = await promptSecret(
+    `API key${preset.apiKeyUrl ? ` — get one at ${preset.apiKeyUrl}` : ''} (leave blank for none): `,
+  )
+  const providerId = await promptText('Provider id', preset.id)
+  return finalizeProvider({
+    baseUrl: preset.baseUrl,
+    api: preset.api,
+    key,
+    providerId,
+    label: preset.label,
+    models,
+  })
+}
+
+/** OAuth path: run afw's own subscription login, then register the provider
+ *  with `agent-oauth` auth (the token is resolved + refreshed from afw's own
+ *  store at request time) plus the selected models. */
+async function registerOAuthProvider(
+  preset: CatalogProvider,
+  models: PendingModel[],
+): Promise<{ providerId: string; modelIds: string[] } | null> {
+  const def = await oauthLogin(preset.oauthKey as 'anthropic' | 'openai')
+  if (!def) {
+    logger.print('  (login not completed — skipping this provider)')
+    return null
+  }
+  const providerId = await promptText('Provider id', preset.id)
+  await daemonFetch('POST', '/api/routing/provider', {
+    id: providerId,
+    name: preset.label,
+    baseUrl: def.register.baseUrl,
+    api: def.register.api,
+    authKind: 'agent-oauth',
+    agent: def.register.agent,
+  })
+  for (const m of models) {
+    await daemonFetch('POST', '/api/routing/model', {
+      id: m.id,
+      providerId,
+      ...(m.label ? { label: m.label } : {}),
+      input: m.vision ? ['text', 'image'] : ['text'],
+      ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+      ...(m.maxTokens ? { maxTokens: m.maxTokens } : {}),
+    })
+  }
+  logger.print(`✓ provider ${providerId} + ${models.length} model(s) registered (OAuth subscription)`)
+  return { providerId, modelIds: models.map((m) => m.id) }
+}
+
+/** Manual path: ask for everything (base URL, wire format, models, vision). */
+async function addCustomProvider(): Promise<{ providerId: string; modelIds: string[] } | null> {
+  const baseUrl = await promptText('Provider base URL (e.g. https://api.openai.com/v1)')
   if (!baseUrl) {
     logger.print('  (no base URL — skipping)')
     return null
@@ -125,30 +273,44 @@ export async function addOneProvider(): Promise<{ providerId: string; modelIds: 
     'anthropic',
   ] as const)
 
-  let key = await promptSecret('API key (leave blank for none): ')
+  const key = await promptSecret('API key (leave blank for none): ')
 
-  const modelIds: string[] = []
+  const ids: string[] = []
   for (;;) {
-    const id = await promptText(
-      modelIds.length === 0 ? 'Model id' : 'Another model id (blank to finish)',
-    )
+    const id = await promptText(ids.length === 0 ? 'Model id' : 'Another model id (blank to finish)')
     if (!id) break
-    modelIds.push(id)
+    ids.push(id)
     if (!process.stdin.isTTY) break
   }
-  if (modelIds.length === 0) {
+  if (ids.length === 0) {
     logger.print('  (no models — skipping)')
     return null
   }
 
   const vision = await confirmYesNo('Do these models accept image input?', false)
   const providerId = await promptText('Provider id', providerIdFromUrl(baseUrl))
+  return finalizeProvider({
+    baseUrl,
+    api: apiChoice,
+    key,
+    providerId,
+    models: ids.map((id) => ({ id, vision })),
+  })
+}
 
-  // Validate with a live probe (best-effort retry loop).
+/** Shared tail of both paths: validate with a live probe (best-effort retry
+ *  loop), then register the provider + its models via the daemon. */
+async function finalizeProvider(
+  p: PendingProvider,
+): Promise<{ providerId: string; modelIds: string[] } | null> {
+  let baseUrl = p.baseUrl
+  let key = p.key
+  const apiChoice = p.api
+
   let resolvedApi: ApiCompat | undefined
   for (;;) {
     logger.print(`  probing ${baseUrl} …`)
-    const { result, api } = await probe(apiChoice, baseUrl, key, modelIds[0]!)
+    const { result, api } = await probe(apiChoice, baseUrl, key, p.models[0]!.id)
     if (result.ok && (api ?? (apiChoice !== 'auto' ? apiChoice : undefined))) {
       resolvedApi = api ?? (apiChoice as ApiCompat)
       logger.print(`  ✓ reachable (${resolvedApi}, HTTP ${result.status})`)
@@ -175,7 +337,7 @@ export async function addOneProvider(): Promise<{ providerId: string; modelIds: 
     if (retry === 'edit base URL')
       baseUrl = (await promptText('Provider base URL', baseUrl)) || baseUrl
     if (retry === 'edit model id')
-      modelIds[0] = (await promptText('Model id', modelIds[0])) || modelIds[0]!
+      p.models[0]!.id = (await promptText('Model id', p.models[0]!.id)) || p.models[0]!.id
     if (retry === 'edit API key') key = await promptSecret('API key (leave blank for none): ')
   }
 
@@ -183,22 +345,26 @@ export async function addOneProvider(): Promise<{ providerId: string; modelIds: 
   const authKind = key ? (resolvedApi === 'anthropic' ? 'api-key' : 'bearer') : 'passthrough'
 
   await daemonFetch('POST', '/api/routing/provider', {
-    id: providerId,
+    id: p.providerId,
+    ...(p.label ? { name: p.label } : {}),
     baseUrl,
     api: modelApi,
     authKind,
     ...(authKind === 'api-key' ? { authHeader: 'x-api-key' } : {}),
     ...(key ? { apiKey: key } : {}),
   })
-  for (const id of modelIds) {
+  for (const m of p.models) {
     await daemonFetch('POST', '/api/routing/model', {
-      id,
-      providerId,
-      input: vision ? ['text', 'image'] : ['text'],
+      id: m.id,
+      providerId: p.providerId,
+      ...(m.label ? { label: m.label } : {}),
+      input: m.vision ? ['text', 'image'] : ['text'],
+      ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+      ...(m.maxTokens ? { maxTokens: m.maxTokens } : {}),
     })
   }
-  logger.print(`✓ provider ${providerId} + ${modelIds.length} model(s) registered`)
-  return { providerId, modelIds }
+  logger.print(`✓ provider ${p.providerId} + ${p.models.length} model(s) registered`)
+  return { providerId: p.providerId, modelIds: p.models.map((m) => m.id) }
 }
 
 const addCmd = new Command('add')

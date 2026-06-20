@@ -25,7 +25,16 @@ import { parseOpenAIResponsesStream } from '../decoders/openai/responses-sse.ts'
 import { parseOpenAIChatStream } from '../decoders/openai/sse.ts'
 import { responseToIR } from './from-openai-responses.ts'
 import { type IRResponse, type IRUsage, canonicalStopReason, openaiStopReason } from './ir.ts'
-import { asObject, num, optNum, parseToolArgs, str, stringifyToolArgs } from './shared.ts'
+import {
+  LOCAL_SHELL_TOOL,
+  asObject,
+  inputToShellAction,
+  num,
+  optNum,
+  parseToolArgs,
+  str,
+  stringifyToolArgs,
+} from './shared.ts'
 
 // ── neutral incremental event model ───────────────────────────────
 
@@ -604,7 +613,12 @@ class OpenAIResponsesWriter implements Writer {
           return itemAdded + partAdded
         }
         if (ev.block.type === 'tool_use') {
-          const itemId = `fc_${nanoid()}`
+          // codex's `local_shell` is a built-in, not a function — emit it as a
+          // `local_shell_call` item so codex's strict parser accepts it. Its
+          // argv arrives via the same tool-args deltas (suppressed below) and is
+          // folded into the exec `action` at close.
+          const isShell = ev.block.name === LOCAL_SHELL_TOOL
+          const itemId = `${isShell ? 'lsh' : 'fc'}_${nanoid()}`
           this.acc.set(ev.index, {
             block: { type: 'tool_use', id: ev.block.id, name: ev.block.name, input: {} },
             toolJson: '',
@@ -613,18 +627,27 @@ class OpenAIResponsesWriter implements Writer {
             contentIndex: 0,
           })
           this.order.push(ev.index)
+          const callId = ev.block.id || `call_${nanoid()}`
           return frame('response.output_item.added', {
             type: 'response.output_item.added',
             sequence_number: this.seq++,
             output_index: outputIndex,
-            item: {
-              id: itemId,
-              type: 'function_call',
-              status: 'in_progress',
-              arguments: '',
-              call_id: ev.block.id || `call_${nanoid()}`,
-              name: ev.block.name,
-            },
+            item: isShell
+              ? {
+                  id: itemId,
+                  type: 'local_shell_call',
+                  status: 'in_progress',
+                  call_id: callId,
+                  action: { type: 'exec', command: [] },
+                }
+              : {
+                  id: itemId,
+                  type: 'function_call',
+                  status: 'in_progress',
+                  arguments: '',
+                  call_id: callId,
+                  name: ev.block.name,
+                },
           })
         }
         // thinking → tracked for state but emits no openai-responses event.
@@ -660,6 +683,10 @@ class OpenAIResponsesWriter implements Writer {
         const entry = this.acc.get(ev.index)
         if (!entry) return ''
         entry.toolJson += ev.json
+        // A local_shell_call carries no streamed `arguments` channel — its argv
+        // is delivered whole in the `action` on the item-done event. Keep
+        // accumulating the JSON for that, but emit no function_call delta.
+        if (entry.block.type === 'tool_use' && entry.block.name === LOCAL_SHELL_TOOL) return ''
         return frame('response.function_call_arguments.delta', {
           type: 'response.function_call_arguments.delta',
           sequence_number: this.seq++,
@@ -706,6 +733,21 @@ class OpenAIResponsesWriter implements Writer {
         }
         if (entry.block.type === 'tool_use') {
           const argsStr = entry.toolJson || ''
+          const callId = entry.block.id || `call_${nanoid()}`
+          if (entry.block.name === LOCAL_SHELL_TOOL) {
+            return frame('response.output_item.done', {
+              type: 'response.output_item.done',
+              sequence_number: this.seq++,
+              output_index: entry.outputIndex,
+              item: {
+                id: entry.itemId,
+                type: 'local_shell_call',
+                status: 'completed',
+                call_id: callId,
+                action: inputToShellAction(parseToolArgs(argsStr)),
+              },
+            })
+          }
           const argsDone = frame('response.function_call_arguments.done', {
             type: 'response.function_call_arguments.done',
             sequence_number: this.seq++,
@@ -722,7 +764,7 @@ class OpenAIResponsesWriter implements Writer {
               type: 'function_call',
               status: 'completed',
               arguments: argsStr,
-              call_id: entry.block.id || `call_${nanoid()}`,
+              call_id: callId,
               name: entry.block.name,
             },
           })
@@ -743,6 +785,14 @@ class OpenAIResponsesWriter implements Writer {
               status: 'completed',
               role: 'assistant',
               content: [{ type: 'output_text', text: entry.block.text, annotations: [] }],
+            })
+          } else if (entry.block.type === 'tool_use' && entry.block.name === LOCAL_SHELL_TOOL) {
+            output.push({
+              id: entry.itemId,
+              type: 'local_shell_call',
+              status: 'completed',
+              call_id: entry.block.id || `call_${nanoid()}`,
+              action: inputToShellAction(parseToolArgs(entry.toolJson || '')),
             })
           } else if (entry.block.type === 'tool_use') {
             output.push({

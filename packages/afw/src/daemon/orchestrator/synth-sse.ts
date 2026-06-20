@@ -11,7 +11,7 @@ import type { ModelApi } from '../../core/model-registry.ts'
 import type { NormalizedBlock } from '../../core/packet.ts'
 import { type IRResponse, serializeResponseFromIR } from '../translate/index.ts'
 import { openaiStopReason } from '../translate/ir.ts'
-import { stringifyToolArgs } from '../translate/shared.ts'
+import { LOCAL_SHELL_TOOL, inputToShellAction, stringifyToolArgs } from '../translate/shared.ts'
 
 type SseEvent = { event?: string; data: string }
 
@@ -187,10 +187,20 @@ function synthOpenAIResponses(ir: IRResponse): string {
   type Item =
     | { kind: 'message'; id: string; text: string }
     | { kind: 'function_call'; id: string; callId: string; name: string; argsStr: string }
+    | { kind: 'local_shell_call'; id: string; callId: string; action: unknown }
   const items: Item[] = []
   for (const b of ir.blocks) {
     if (b.type === 'text') {
       items.push({ kind: 'message', id: `msg_${nanoid()}`, text: b.text })
+    } else if (b.type === 'tool_use' && b.name === LOCAL_SHELL_TOOL) {
+      // codex's shell built-in — emit a local_shell_call item, not a
+      // function_call codex has no tool for (mirrors the true-stream writer).
+      items.push({
+        kind: 'local_shell_call',
+        id: `lsh_${nanoid()}`,
+        callId: b.id || `call_${nanoid()}`,
+        action: inputToShellAction(b.input),
+      })
     } else if (b.type === 'tool_use') {
       items.push({
         kind: 'function_call',
@@ -214,24 +224,34 @@ function synthOpenAIResponses(ir: IRResponse): string {
   const incomplete = ir.stopReason === 'max_tokens'
 
   const finishedOutput = (): unknown[] =>
-    items.map((it) =>
-      it.kind === 'message'
-        ? {
-            id: it.id,
-            type: 'message',
-            status: 'completed',
-            role: 'assistant',
-            content: [{ type: 'output_text', text: it.text, annotations: [] }],
-          }
-        : {
-            id: it.id,
-            type: 'function_call',
-            status: 'completed',
-            arguments: it.argsStr,
-            call_id: it.callId,
-            name: it.name,
-          },
-    )
+    items.map((it) => {
+      if (it.kind === 'message') {
+        return {
+          id: it.id,
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: it.text, annotations: [] }],
+        }
+      }
+      if (it.kind === 'local_shell_call') {
+        return {
+          id: it.id,
+          type: 'local_shell_call',
+          status: 'completed',
+          call_id: it.callId,
+          action: it.action,
+        }
+      }
+      return {
+        id: it.id,
+        type: 'function_call',
+        status: 'completed',
+        arguments: it.argsStr,
+        call_id: it.callId,
+        name: it.name,
+      }
+    })
 
   const baseResponse = (
     status: 'in_progress' | 'completed' | 'incomplete',
@@ -337,6 +357,39 @@ function synthOpenAIResponses(ir: IRResponse): string {
             status: 'completed',
             role: 'assistant',
             content: [{ type: 'output_text', text: it.text, annotations: [] }],
+          },
+        }),
+      })
+    } else if (it.kind === 'local_shell_call') {
+      // codex's shell built-in has no streamed arguments channel — its argv is
+      // delivered whole in the action on added + done.
+      events.push({
+        event: 'response.output_item.added',
+        data: JSON.stringify({
+          type: 'response.output_item.added',
+          sequence_number: seq++,
+          output_index: outputIndex,
+          item: {
+            id: it.id,
+            type: 'local_shell_call',
+            status: 'in_progress',
+            call_id: it.callId,
+            action: it.action,
+          },
+        }),
+      })
+      events.push({
+        event: 'response.output_item.done',
+        data: JSON.stringify({
+          type: 'response.output_item.done',
+          sequence_number: seq++,
+          output_index: outputIndex,
+          item: {
+            id: it.id,
+            type: 'local_shell_call',
+            status: 'completed',
+            call_id: it.callId,
+            action: it.action,
           },
         }),
       })

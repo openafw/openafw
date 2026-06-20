@@ -78,6 +78,41 @@ describe('translateSseStream', () => {
     }
   }
 
+  it('streams a chat local_shell tool call back to codex as a local_shell_call', async () => {
+    // A chat backend streams a tool call to the synthetic `local_shell`
+    // function; translated to Responses it must become a local_shell_call the
+    // codex client (and our Responses decoder) reads back as a shell tool_use.
+    const shellIR: IRResponse = {
+      model: 'test-model',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'local_shell', input: { command: ['ls'] } }],
+      stopReason: 'tool_use',
+      usage: { in: 4, out: 2 },
+    }
+    const chatSse = synthesizeSse('openai-chat', shellIR)
+    const out = translateSseStream('openai-chat', 'openai-responses', streamOf(chatSse))
+    const r = await parseOpenAIResponsesStream(out)
+    expect(r.errors).toEqual([])
+    const tool = r.blocks.find((b) => b.type === 'tool_use')
+    expect(tool?.type).toBe('tool_use')
+    if (tool?.type !== 'tool_use') return
+    expect(tool.name).toBe('local_shell')
+    expect((tool.input as { command: string[] }).command).toEqual(['ls'])
+  })
+
+  it('synthesizes a local_shell_call SSE for codex on the buffered path', async () => {
+    const shellIR: IRResponse = {
+      model: 'test-model',
+      blocks: [{ type: 'tool_use', id: 'call_2', name: 'local_shell', input: { command: ['pwd'] } }],
+      stopReason: 'tool_use',
+      usage: { in: 1, out: 1 },
+    }
+    const sse = synthesizeSse('openai-responses', shellIR)
+    const r = await parseOpenAIResponsesStream(streamOf(sse))
+    expect(r.errors).toEqual([])
+    const tool = r.blocks.find((b) => b.type === 'tool_use')
+    expect(tool?.type === 'tool_use' && tool.name).toBe('local_shell')
+  })
+
   it('is an identity passthrough when source and destination match', async () => {
     const src = synthesizeSse('anthropic-messages', IR)
     const stream = streamOf(src)

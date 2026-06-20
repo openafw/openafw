@@ -227,7 +227,41 @@ export function inputToMessages(input: unknown): Any[] {
       })
       continue
     }
-    if (it.type === 'function_call_output' || it.type === 'tool_result') {
+    if (it.type === 'local_shell_call') {
+      // codex's shell built-in call in the conversation history
+      out.push({
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: it.call_id ?? it.id ?? '',
+            name: 'local_shell',
+            input: it.action && typeof it.action === 'object' ? it.action : {},
+          },
+        ],
+      })
+      continue
+    }
+    if (it.type === 'custom_tool_call') {
+      out.push({
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: it.call_id ?? it.id ?? '',
+            name: it.name ?? '',
+            input: tryParseArgs(it.input),
+          },
+        ],
+      })
+      continue
+    }
+    if (
+      it.type === 'function_call_output' ||
+      it.type === 'tool_result' ||
+      it.type === 'custom_tool_call_output' ||
+      it.type === 'local_shell_call_output'
+    ) {
       // tool result message
       out.push({
         role: 'tool',

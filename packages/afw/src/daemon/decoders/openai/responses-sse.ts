@@ -153,6 +153,26 @@ export function collectOutputBlocks(output: unknown): NormalizedBlock[] {
         }
         break
       }
+      case 'local_shell_call': {
+        // codex's shell built-in — surface it as a tool_use so the trace shows
+        // the command instead of dropping the item.
+        blocks.push({
+          type: 'tool_use',
+          id: it.call_id ?? it.id ?? '',
+          name: 'local_shell',
+          input: it.action && typeof it.action === 'object' ? it.action : {},
+        })
+        break
+      }
+      case 'custom_tool_call': {
+        blocks.push({
+          type: 'tool_use',
+          id: it.call_id ?? it.id ?? '',
+          name: typeof it.name === 'string' ? it.name : '',
+          input: typeof it.input === 'string' ? it.input : (it.input ?? {}),
+        })
+        break
+      }
       case 'function_call':
       case 'tool_call': {
         const name = typeof it.name === 'string' ? it.name : (it.function?.name ?? '')

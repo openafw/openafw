@@ -13,7 +13,16 @@ import {
   mergeConsecutive,
   urlToImageSource,
 } from './ir.ts'
-import { asObject, num, optNum, parseToolArgs, str } from './shared.ts'
+import {
+  LOCAL_SHELL_SCHEMA,
+  LOCAL_SHELL_TOOL,
+  asObject,
+  num,
+  optNum,
+  parseToolArgs,
+  shellActionToInput,
+  str,
+} from './shared.ts'
 
 export function requestToIR(body: unknown): IRRequest {
   const b = asObject(body)
@@ -25,7 +34,9 @@ export function requestToIR(body: unknown): IRRequest {
   } else if (Array.isArray(b.input)) {
     for (const raw of b.input) {
       const it = asObject(raw)
-      if (it.type === 'function_call') {
+      if (it.type === 'function_call' || it.type === 'custom_tool_call') {
+        // `custom_tool_call` is codex's freeform-tool call (e.g. apply_patch);
+        // its argument lives in `input` as a raw string rather than `arguments`.
         messages.push({
           role: 'assistant',
           content: [
@@ -33,11 +44,31 @@ export function requestToIR(body: unknown): IRRequest {
               type: 'tool_use',
               id: str(it.call_id) ?? str(it.id) ?? '',
               name: str(it.name) ?? '',
-              input: parseToolArgs(it.arguments),
+              input: parseToolArgs(it.arguments ?? it.input),
             },
           ],
         })
-      } else if (it.type === 'function_call_output' || it.type === 'tool_result') {
+      } else if (it.type === 'local_shell_call') {
+        // Codex's shell call — fold into a tool_use against the synthetic
+        // `local_shell` function tool so the conversation history stays
+        // consistent with the tool we expose to the chat backend.
+        messages.push({
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: str(it.call_id) ?? str(it.id) ?? '',
+              name: LOCAL_SHELL_TOOL,
+              input: shellActionToInput(it.action),
+            },
+          ],
+        })
+      } else if (
+        it.type === 'function_call_output' ||
+        it.type === 'tool_result' ||
+        it.type === 'custom_tool_call_output' ||
+        it.type === 'local_shell_call_output'
+      ) {
         messages.push({
           role: 'user',
           content: [
@@ -129,6 +160,21 @@ function toolsToIR(tools: unknown): IRTool[] | undefined {
   const out: IRTool[] = []
   for (const raw of tools) {
     const t = asObject(raw)
+    // Codex's `local_shell` built-in has a `type` but no `name`. Chat
+    // Completions can't express a built-in, so surface it as a function tool
+    // the routed model can actually call — otherwise the old `if (!name)`
+    // guard dropped it silently and the model saw only codex's named tools
+    // (apply_patch / update_plan), reporting it had no way to read or run.
+    if (t.type === 'local_shell') {
+      out.push({
+        name: LOCAL_SHELL_TOOL,
+        description:
+          "Run a shell command on the user's machine and return its " +
+          'stdout/stderr. Provide the command as an argv array.',
+        inputSchema: LOCAL_SHELL_SCHEMA,
+      })
+      continue
+    }
     const fn = asObject(t.function)
     const name = str(t.name) ?? str(fn.name)
     if (!name) continue

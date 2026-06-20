@@ -7,7 +7,7 @@
 
 import { nanoid } from 'nanoid'
 import { type IRBlock, type IRRequest, type IRResponse, imageSourceToUrl } from './ir.ts'
-import { stringifyToolArgs } from './shared.ts'
+import { LOCAL_SHELL_TOOL, inputToShellAction, stringifyToolArgs } from './shared.ts'
 
 export function requestFromIR(ir: IRRequest): unknown {
   const input: unknown[] = []
@@ -75,6 +75,17 @@ export function responseFromIR(ir: IRResponse): unknown {
         role: 'assistant',
         status: 'completed',
         content: [{ type: 'output_text', text: b.text, annotations: [] }],
+      })
+    } else if (b.type === 'tool_use' && b.name === LOCAL_SHELL_TOOL) {
+      // The chat backend called the synthetic shell function — hand it back as
+      // the `local_shell_call` codex registered, not a `function_call` it has
+      // no tool for.
+      output.push({
+        type: 'local_shell_call',
+        id: `lsh_${nanoid()}`,
+        call_id: b.id || `call_${nanoid()}`,
+        status: 'completed',
+        action: inputToShellAction(b.input),
       })
     } else if (b.type === 'tool_use') {
       output.push({

@@ -266,6 +266,96 @@ describe('request parsing edge cases', () => {
   })
 })
 
+describe('codex local_shell built-in (Responses → Chat)', () => {
+  // Codex ships its shell capability as the Responses *built-in* `local_shell`
+  // tool — `{type:"local_shell"}`, no `name`. A chat-completions backend has no
+  // built-in equivalent, so it must surface as a callable function tool.
+  const CODEX_REQUEST = {
+    model: 'gpt-5-codex',
+    instructions: 'You are a coding agent.',
+    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ls /tmp' }] }],
+    tools: [
+      { type: 'local_shell' },
+      { type: 'function', name: 'apply_patch', parameters: { type: 'object' } },
+    ],
+    stream: false,
+  }
+
+  it('exposes local_shell as a callable function tool, not dropped', () => {
+    const ir = parseRequestToIR('openai-responses', CODEX_REQUEST)
+    const names = (ir.tools ?? []).map((t) => t.name)
+    expect(names).toContain('local_shell')
+    expect(names).toContain('apply_patch')
+  })
+
+  it('translates the request so the chat backend sees both tools', () => {
+    const chat = translateRequest('openai-responses', 'openai-chat', CODEX_REQUEST) as {
+      tools: Array<{ type: string; function: { name: string } }>
+    }
+    const names = chat.tools.map((t) => t.function.name)
+    expect(names).toEqual(['local_shell', 'apply_patch'])
+  })
+
+  it('turns the chat tool call back into a local_shell_call codex understands', () => {
+    // A chat backend calls the synthetic `local_shell` function…
+    const chatResponse = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_42',
+                type: 'function',
+                function: { name: 'local_shell', arguments: '{"command":["ls","/tmp"]}' },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 3 },
+    }
+    const responses = translateResponseJson(
+      'openai-chat',
+      'openai-responses',
+      chatResponse,
+    ) as { output: Array<Record<string, unknown>> }
+    const shell = responses.output.find((o) => o.type === 'local_shell_call')
+    expect(shell).toBeDefined()
+    expect(shell?.call_id).toBe('call_42')
+    expect(shell?.action).toMatchObject({ type: 'exec', command: ['ls', '/tmp'] })
+    // No stray function_call item leaks through for the built-in.
+    expect(responses.output.some((o) => o.type === 'function_call')).toBe(false)
+  })
+
+  it('folds a prior local_shell_call / output pair back into the IR history', () => {
+    const ir = parseRequestToIR('openai-responses', {
+      model: 'gpt-5-codex',
+      input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ls' }] },
+        {
+          type: 'local_shell_call',
+          call_id: 'call_7',
+          action: { type: 'exec', command: ['ls', '-la'] },
+        },
+        { type: 'local_shell_call_output', call_id: 'call_7', output: 'file-a\nfile-b' },
+      ],
+      tools: [{ type: 'local_shell' }],
+    })
+    const toolUse = ir.messages
+      .flatMap((m) => m.content)
+      .find((b) => b.type === 'tool_use')
+    const toolResult = ir.messages
+      .flatMap((m) => m.content)
+      .find((b) => b.type === 'tool_result')
+    expect(toolUse).toMatchObject({ name: 'local_shell', id: 'call_7' })
+    expect((toolUse as { input: { command: string[] } }).input.command).toEqual(['ls', '-la'])
+    expect(toolResult).toMatchObject({ toolUseId: 'call_7' })
+  })
+})
+
 describe('stop reason mapping', () => {
   it('round-trips end_turn / tool_use between Anthropic and Chat', () => {
     for (const reason of ['end_turn', 'tool_use', 'max_tokens']) {

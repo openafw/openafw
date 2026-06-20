@@ -1,5 +1,5 @@
-import { access, readFile } from 'node:fs/promises'
-import { delimiter, dirname, isAbsolute, join, normalize, sep } from 'node:path'
+import { access, readFile, readdir } from 'node:fs/promises'
+import { basename, delimiter, dirname, isAbsolute, join, normalize, sep } from 'node:path'
 import process from 'node:process'
 
 export type ResolvedLaunchBin = {
@@ -41,9 +41,29 @@ function hasPathSeparator(command: string): boolean {
   return command.includes('/') || command.includes('\\')
 }
 
+/** Resolve a candidate path the way Windows' loader does — case-insensitively.
+ *  Returns the real on-disk path (preserving its actual case) or undefined.
+ *  An exact match is the fast path (correct on real Windows and on a
+ *  case-insensitive host FS like macOS); the directory scan is the fallback
+ *  that makes win32 resolution behave correctly even on a case-sensitive host
+ *  FS (Linux CI), where `PATHEXT`'s case need not match the file's. */
+async function resolveCaseInsensitive(path: string): Promise<string | undefined> {
+  if (await exists(path)) return path
+  const dir = dirname(path)
+  const target = basename(path).toLowerCase()
+  try {
+    const entries = await readdir(dir)
+    const match = entries.find((e) => e.toLowerCase() === target)
+    return match ? join(dir, match) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function firstExisting(candidates: string[]): Promise<string | undefined> {
   for (const candidate of candidates) {
-    if (await exists(candidate)) return candidate
+    const hit = await resolveCaseInsensitive(candidate)
+    if (hit) return hit
   }
   return undefined
 }

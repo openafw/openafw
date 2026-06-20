@@ -12,6 +12,7 @@ import { type RoutingTarget, policyKeyFor } from '../../core/routing-policy.ts'
 import { daemonFetch } from '../util/daemon-client.ts'
 import { afwUrlForInstance } from '../wire/url.ts'
 import { decideAutoCompactWindow } from './auto-compact.ts'
+import { resolveCodexWireProtocol } from './codex-protocol.ts'
 import { resolveLaunchBin } from './resolve-bin.ts'
 import { type LaunchWiring, wiringForBin } from './wiring.ts'
 
@@ -120,7 +121,14 @@ export async function launchInstance(opts: LaunchInstanceOpts): Promise<void> {
       wiring.agent === 'claude-code' && !opts.monitor && opts.model
         ? await resolveAutoCompactEnv(wiring.agent, opts.model)
         : {}
-    const plan = await wiring.build(baseUrl, extraEnv)
+    // Match codex's wire protocol to the routed backend so a chat-completions
+    // model stays chat↔chat (no Responses translation). Same resolver
+    // ensureWireRoute uses for the decoder, so the two agree.
+    const wireApi =
+      wiring.agent === 'codex' && !opts.monitor
+        ? (await resolveCodexWireProtocol(opts.model)).wireApi
+        : undefined
+    const plan = await wiring.build(baseUrl, { extraEnv, ...(wireApi ? { wireApi } : {}) })
     argvPrefix = plan.argvPrefix
     envOverride = plan.env
   }

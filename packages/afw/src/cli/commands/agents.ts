@@ -66,7 +66,7 @@ function buildLauncher(agent: AgentId, bin: string): Command {
         if (flagGiven) await writeLaunchConfig(cwd, agent, cfg)
 
         await ensureDaemonRunning()
-        await ensureWireRoute(agent)
+        await ensureWireRoute(agent, { modelOverride: cfg.model })
 
         const instanceLabel = cfg.as ?? dirLabel(cwd)
 

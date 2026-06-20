@@ -16,6 +16,7 @@ import { detectorFor } from '../detect/index.ts'
 import type { PlannedEndpoint } from '../detect/types.ts'
 import { upsertRoutes } from '../wire/routes.ts'
 import { routeKeyForModel } from '../wire/url.ts'
+import { resolveCodexWireProtocol } from './codex-protocol.ts'
 
 // Per-agent credential capture for the launch-per-task agents the launcher
 // supports. (Daemon/app agents are configured via `afw model add`.)
@@ -35,9 +36,20 @@ const FALLBACK: Record<string, { upstream: string; decoder: DecoderKind }> = {
   codex: { upstream: 'https://api.openai.com/v1', decoder: 'openai-responses' },
 }
 
-export async function ensureWireRoute(agent: AgentId): Promise<void> {
+export async function ensureWireRoute(
+  agent: AgentId,
+  opts?: { modelOverride?: string },
+): Promise<void> {
   const det = detectorFor(agent)
   const detection = det ? await det.detect() : null
+
+  // codex's wire protocol tracks the routed backend (codex-protocol.ts). The
+  // route decoder must match the protocol codex actually speaks, or the proxy
+  // mis-parses every request — so override the detector's static
+  // openai-responses decoder with the resolved one. Same resolver the launcher
+  // uses for codex's `wire_api`, so the decoder and wire_api always agree.
+  const codexDecoder =
+    agent === 'codex' ? (await resolveCodexWireProtocol(opts?.modelOverride)).decoder : undefined
 
   const routeUpdates: Record<string, RouteEntry> = {}
 
@@ -46,7 +58,7 @@ export async function ensureWireRoute(agent: AgentId): Promise<void> {
       if (!ep.active) continue
       routeUpdates[routeKeyForModel(agent, ep.modelId)] = {
         upstream: ep.upstream,
-        decoder: ep.decoder,
+        decoder: codexDecoder ?? ep.decoder,
         ...(ep.sourceModelId ? { sourceModelId: ep.sourceModelId } : {}),
         ...(ep.harvest ? { harvest: ep.harvest } : {}),
         ...(ep.auth ? { auth: ep.auth } : {}),
@@ -66,7 +78,10 @@ export async function ensureWireRoute(agent: AgentId): Promise<void> {
   if (Object.keys(routeUpdates).length === 0) {
     const fb = FALLBACK[agent]
     if (fb)
-      routeUpdates[routeKeyForModel(agent, '*')] = { upstream: fb.upstream, decoder: fb.decoder }
+      routeUpdates[routeKeyForModel(agent, '*')] = {
+        upstream: fb.upstream,
+        decoder: codexDecoder ?? fb.decoder,
+      }
   }
 
   if (Object.keys(routeUpdates).length > 0) await upsertRoutes(routeUpdates)

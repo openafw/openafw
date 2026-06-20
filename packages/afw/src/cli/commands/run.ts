@@ -64,7 +64,7 @@ export const runCommand = new Command('run')
     try {
       if (!opts.raw) {
         await ensureDaemonRunning()
-        await ensureWireRoute(wiring!.agent)
+        await ensureWireRoute(wiring!.agent, { modelOverride: opts.model })
       }
       await launchInstance({
         bin: bin!,

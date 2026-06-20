@@ -25,12 +25,19 @@ describe('launch wiring registry', () => {
     expect(plan.env).toEqual({})
   })
 
-  it('codex build emits clobber-proof -c overrides', async () => {
+  it('codex build emits clobber-proof -c overrides (defaults to responses)', async () => {
     const plan = await wiringForAgent('codex')!.build('http://localhost:9877/wire/codex@proj')
     expect(plan.argvPrefix).toContain('model_provider=afw')
     expect(plan.argvPrefix.join(' ')).toContain(
       'model_providers.afw.base_url="http://localhost:9877/wire/codex@proj"',
     )
     expect(plan.argvPrefix.join(' ')).toContain('model_providers.afw.wire_api="responses"')
+  })
+
+  it('codex build emits wire_api="chat" when the backend is chat-completions', async () => {
+    const plan = await wiringForAgent('codex')!.build('http://localhost:9877/wire/codex@proj', {
+      wireApi: 'chat',
+    })
+    expect(plan.argvPrefix.join(' ')).toContain('model_providers.afw.wire_api="chat"')
   })
 })

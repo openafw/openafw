@@ -1,6 +1,6 @@
-# afw
+# OpenAFW
 
-> The local firewall for AI agents: route and repair them, and keep your
+> The AI agent firewall that runs locally on your computer: route and fusion, and keep your
 > secrets off the model, the API relay, and the supply chain.
 
 **A tiny local proxy on the wire between your agents and the LLMs they call

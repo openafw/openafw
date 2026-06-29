@@ -13,8 +13,10 @@ import { handleListMcp } from './mcp.ts'
 import {
   handleDeleteOgrCommandRule,
   handleGetOgrPolicy,
+  handlePostOgrApprove,
   handlePostOgrCommandRule,
   handlePostOgrContent,
+  handlePostOgrReject,
 } from './ogr.ts'
 import { handleListRisk } from './risk.ts'
 import {
@@ -66,6 +68,8 @@ api.get('/ogr/policy', handleGetOgrPolicy)
 api.post('/ogr/content', handlePostOgrContent)
 api.post('/ogr/command-rule', handlePostOgrCommandRule)
 api.delete('/ogr/command-rule', handleDeleteOgrCommandRule)
+api.post('/ogr/approve', handlePostOgrApprove)
+api.post('/ogr/reject', handlePostOgrReject)
 api.get('/masking', handleGetMasking)
 api.post('/masking/rule', handlePostMaskingRule)
 api.post('/masking/provider', handlePostMaskingProvider)

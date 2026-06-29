@@ -3813,6 +3813,23 @@ table.kv-table code.path {
 .ogr-error {
   margin: 0 0 0.75rem;
 }
+.ogr-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--warn, #c80);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn, #c80) 10%, transparent);
+  font-size: 0.85rem;
+}
+.ogr-pending-actions {
+  display: flex;
+  gap: 0.4rem;
+}
 .ogr-decision {
   font-size: 0.78rem;
   padding: 0.1rem 0.3rem;

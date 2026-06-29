@@ -1,12 +1,12 @@
-import { existsSync } from 'node:fs'
 import type { Context } from 'hono'
 import { paths } from '../../core/paths.ts'
 import {
   type CommandRule,
   type ContentRules,
-  type OgrPolicy,
-  loadOgrPolicy,
+  approveProposal,
+  getPolicyStatus,
   patchContentRules,
+  rejectProposal,
   removeCommandRule,
   upsertCommandRule,
 } from '../ogr/policy.ts'
@@ -32,21 +32,27 @@ const DECISIONS: readonly Decision[] = ['allow', 'modify', 'redact', 'require_ap
 const isDecision = (v: unknown): v is Decision =>
   typeof v === 'string' && (DECISIONS as readonly string[]).includes(v)
 
-function buildResponse(policy: OgrPolicy) {
+function buildResponse() {
+  const status = getPolicyStatus()
   return {
     altitude: 'gateway',
     policyPath: paths.ogrPolicy,
-    usingDefault: !existsSync(paths.ogrPolicy),
+    proposedPath: paths.ogrProposed,
+    usingDefault: status.usingDefault,
+    pending: status.pending,
     decisions: DECISIONS,
     detectors: DETECTORS,
-    policy,
+    // `policy` is the LIVE (enforced) policy; `proposed` is the staged, not-yet-
+    // approved edit (null when none is pending).
+    policy: status.live,
+    proposed: status.proposed ?? null,
   }
 }
 
-/** GET /api/ogr/policy — the effective OGR gateway policy (composition +
- *  content/config rules) and the composed detectors. */
+/** GET /api/ogr/policy — the live (enforced) policy, the composed detectors, and
+ *  any pending proposal awaiting approval. */
 export async function handleGetOgrPolicy(c: Context): Promise<Response> {
-  return c.json(buildResponse(loadOgrPolicy()))
+  return c.json(buildResponse())
 }
 
 /** POST /api/ogr/content — patch the content-rule decisions. The operator (a
@@ -83,7 +89,8 @@ export async function handlePostOgrContent(c: Context): Promise<Response> {
     }
     patch.injectionFromUnverified = b.injectionFromUnverified
   }
-  return c.json(buildResponse(await patchContentRules(patch)))
+  await patchContentRules(patch)
+  return c.json(buildResponse())
 }
 
 /** POST /api/ogr/command-rule — add or replace a command rule (by id). */
@@ -109,12 +116,32 @@ export async function handlePostOgrCommandRule(c: Context): Promise<Response> {
     score: typeof b.score === 'number' && b.score >= 0 && b.score <= 1 ? b.score : 0.5,
     why: typeof b.why === 'string' ? b.why : '',
   }
-  return c.json(buildResponse(await upsertCommandRule(rule)))
+  await upsertCommandRule(rule)
+  return c.json(buildResponse())
 }
 
 /** DELETE /api/ogr/command-rule?id=… — remove a command rule. */
 export async function handleDeleteOgrCommandRule(c: Context): Promise<Response> {
   const id = c.req.query('id')
   if (!id) return c.json({ error: 'ogr: missing id' }, 400)
-  return c.json(buildResponse(await removeCommandRule(id)))
+  await removeCommandRule(id)
+  return c.json(buildResponse())
+}
+
+/** POST /api/ogr/approve — promote the pending proposal to the live policy. The
+ *  dashboard operator (a human) approves here; the agent reaches afw only on the
+ *  wire, not this control API. */
+export async function handlePostOgrApprove(c: Context): Promise<Response> {
+  try {
+    await approveProposal()
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400)
+  }
+  return c.json(buildResponse())
+}
+
+/** POST /api/ogr/reject — discard the pending proposal. */
+export async function handlePostOgrReject(c: Context): Promise<Response> {
+  await rejectProposal()
+  return c.json(buildResponse())
 }

@@ -11,6 +11,7 @@ import { VERSION } from '../core/version.ts'
 import { api } from './api/index.ts'
 import { initMaskingTable } from './masking/load.ts'
 import { handleMcpRelay } from './mcp/relay.ts'
+import { initOgrPolicy } from './ogr/load.ts'
 import { handleWireRequest } from './proxy/index.ts'
 import { handleKeyRequest } from './proxy/keys.ts'
 import { initRoutesTable, onRoutesReload } from './routes/load.ts'
@@ -32,6 +33,7 @@ export async function startServer(opts: { port: number }): Promise<void> {
   await initRoutesTable()
   await initRoutingTables() // load model registry + routing policy + secrets
   await initMaskingTable() // load credential-masking rules (which are disabled)
+  initOgrPolicy() // load + watch the approved OGR gateway policy
   await primeObservedModels()
   void seedFromRoutes() // one seeded provider + harvested models per wire route
   onRoutesReload(() => void seedFromRoutes()) // keep them in sync

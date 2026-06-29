@@ -62,8 +62,13 @@ export const paths = {
   masking: join(AFW_HOME, 'masking.json'),
   // OGR gateway policy — composition + per-detector config the deployer owns.
   // afw is the OGR *gateway* altitude; this file drives its detectors. See
-  // daemon/ogr/. Absent → the bundled default policy is used.
+  // daemon/ogr/. Absent → the bundled default policy is used. This is the LIVE,
+  // human-approved policy that actually enforces.
   ogrPolicy: join(AFW_HOME, 'ogr.policy.json'),
+  // A staged policy PROPOSAL awaiting human approval. Edits (CLI / UI / a
+  // drafting agent) land here; `afw ogr approve` promotes it to the live file.
+  // It is never enforced while pending.
+  ogrProposed: join(AFW_HOME, 'ogr.policy.proposed.json'),
   // Tool providers (web_search backends, etc.) — see core/tool-providers.ts.
   // The afw-tools MCP server reads this file at request time to decide
   // which backend to use for each capability.

@@ -377,6 +377,14 @@ export async function deleteOgrCommandRule(id: string): Promise<OgrPolicyRespons
   return (await r.json()) as OgrPolicyResponse
 }
 
+export function approveOgrProposal(): Promise<OgrPolicyResponse> {
+  return postOgr('/api/ogr/approve', {})
+}
+
+export function rejectOgrProposal(): Promise<OgrPolicyResponse> {
+  return postOgr('/api/ogr/reject', {})
+}
+
 // ── guard: credential masking ──────────────────────────────────────
 
 export async function fetchMasking(): Promise<MaskingResponse> {

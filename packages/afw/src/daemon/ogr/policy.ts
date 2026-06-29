@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { type ParseError, parse as parseJsonc } from 'jsonc-parser'
 import { atomicWrite } from '../../core/atomic-file.ts'
 import { logger } from '../../core/logger.ts'
@@ -107,10 +108,76 @@ export function resetOgrPolicyCache(): void {
   cached = undefined
 }
 
-/** A deep copy of the effective policy, safe to mutate (never aliases the
- *  shared DEFAULT_POLICY). */
-function currentPolicy(): OgrPolicy {
-  return structuredClone(loadOgrPolicy())
+// ── approval gate ──────────────────────────────────────────────────
+//
+// `~/.afw/ogr.policy.json` is the LIVE, human-approved policy that enforces
+// (what loadOgrPolicy reads). Edits never touch it directly: they stage a
+// PROPOSAL in `ogr.policy.proposed.json`, which a human promotes with
+// `afw ogr approve`. Per OGR's non-negotiable rule, an agent may draft and
+// propose but may not enforce a policy the operator has not approved.
+
+/** Read the staged proposal, or undefined when none is pending. */
+export function readProposed(): OgrPolicy | undefined {
+  if (!existsSync(paths.ogrProposed)) return undefined
+  try {
+    const errors: ParseError[] = []
+    const parsed = parseJsonc(readFileSync(paths.ogrProposed, 'utf8'), errors, {
+      allowTrailingComma: true,
+    })
+    if (errors.length > 0) return undefined
+    return normalizePolicy(parsed)
+  } catch {
+    return undefined
+  }
+}
+
+export function hasPendingProposal(): boolean {
+  return existsSync(paths.ogrProposed)
+}
+
+export type PolicyStatus = {
+  live: OgrPolicy
+  proposed?: OgrPolicy
+  usingDefault: boolean
+  pending: boolean
+}
+
+export function getPolicyStatus(): PolicyStatus {
+  const proposed = readProposed()
+  return {
+    live: loadOgrPolicy(),
+    ...(proposed ? { proposed } : {}),
+    usingDefault: !existsSync(paths.ogrPolicy),
+    pending: proposed !== undefined,
+  }
+}
+
+/** The base an edit builds on: the pending proposal if any, else the live
+ *  policy. Always a deep copy, so the shared DEFAULT_POLICY is never mutated. */
+function workingPolicy(): OgrPolicy {
+  return structuredClone(readProposed() ?? loadOgrPolicy())
+}
+
+/** Stage a full policy as the pending proposal (does not enforce it). */
+export async function proposePolicy(policy: OgrPolicy): Promise<OgrPolicy> {
+  await atomicWrite(paths.ogrProposed, `${JSON.stringify(toCanonical(policy), null, 2)}\n`)
+  return policy
+}
+
+/** Promote the pending proposal to the live policy (the human approval step).
+ *  Returns the now-live policy, or throws when nothing is pending. */
+export async function approveProposal(): Promise<OgrPolicy> {
+  const proposed = readProposed()
+  if (!proposed) throw new Error('no pending proposal to approve')
+  await atomicWrite(paths.ogrPolicy, `${JSON.stringify(toCanonical(proposed), null, 2)}\n`)
+  await rm(paths.ogrProposed, { force: true })
+  resetOgrPolicyCache()
+  return proposed
+}
+
+/** Discard the pending proposal, leaving the live policy untouched. */
+export async function rejectProposal(): Promise<void> {
+  await rm(paths.ogrProposed, { force: true })
 }
 
 /** Serialize an internal policy to the canonical OGR snake_case file shape, so a
@@ -141,35 +208,29 @@ export function toCanonical(p: OgrPolicy): Record<string, unknown> {
   }
 }
 
-/** Atomically write `policy` to `~/.afw/ogr.policy.json` in canonical form and
- *  drop the cache so the next load (and the next packet) sees it. */
-export async function writeOgrPolicy(policy: OgrPolicy): Promise<void> {
-  await atomicWrite(paths.ogrPolicy, `${JSON.stringify(toCanonical(policy), null, 2)}\n`)
-  resetOgrPolicyCache()
-}
+// The mutators stage a PROPOSAL (build on the working copy, write the proposed
+// file) — they never change what is enforced. Approval is the separate
+// `approveProposal` step. Each returns the new proposed policy.
 
 export async function patchContentRules(patch: Partial<ContentRules>): Promise<OgrPolicy> {
-  const p = currentPolicy()
+  const p = workingPolicy()
   p.contentRules = { ...p.contentRules, ...patch }
-  await writeOgrPolicy(p)
-  return loadOgrPolicy()
+  return proposePolicy(p)
 }
 
 /** Add a command rule, or replace the one with the same id. */
 export async function upsertCommandRule(rule: CommandRule): Promise<OgrPolicy> {
-  const p = currentPolicy()
+  const p = workingPolicy()
   const i = p.configRules.commandRules.findIndex((r) => r.id === rule.id)
   if (i >= 0) p.configRules.commandRules[i] = rule
   else p.configRules.commandRules.push(rule)
-  await writeOgrPolicy(p)
-  return loadOgrPolicy()
+  return proposePolicy(p)
 }
 
 export async function removeCommandRule(id: string): Promise<OgrPolicy> {
-  const p = currentPolicy()
+  const p = workingPolicy()
   p.configRules.commandRules = p.configRules.commandRules.filter((r) => r.id !== id)
-  await writeOgrPolicy(p)
-  return loadOgrPolicy()
+  return proposePolicy(p)
 }
 
 function readPolicy(): OgrPolicy {

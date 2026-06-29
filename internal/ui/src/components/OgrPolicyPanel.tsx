@@ -1,13 +1,21 @@
 import { useEffect, useState } from 'react'
-import { deleteOgrCommandRule, fetchOgrPolicy, setOgrContent, upsertOgrCommandRule } from '../api'
+import {
+  approveOgrProposal,
+  deleteOgrCommandRule,
+  fetchOgrPolicy,
+  rejectOgrProposal,
+  setOgrContent,
+  upsertOgrCommandRule,
+} from '../api'
 import type { OgrDecision, OgrPolicyResponse } from '../types'
 
 // The OGR gateway policy control panel on the Guard page. afw is the OGR
-// `gateway` altitude: it normalizes the wire into GuardEvents, runs these
-// composed detectors per ~/.afw/ogr.policy.json, and folds the effective Verdict
-// into the risk findings below. The operator edits the policy here — per OGR's
-// gate it is the AGENT, not the human operator, that may not silently change a
-// live policy. Every save writes the canonical OGR file and reloads it.
+// `gateway` altitude: it runs these composed detectors per ~/.afw/ogr.policy.json
+// and folds the effective Verdict into the risk findings below.
+//
+// Edits never change what enforces directly: they stage a PROPOSAL, which the
+// operator then Approves to make live. Per OGR's gate, an agent may propose but
+// only a human approves — the agent reaches afw on the wire, never this panel.
 const DECISION_SEV: Record<OgrDecision, string> = {
   block: 'high',
   require_approval: 'high',
@@ -70,8 +78,11 @@ export function OgrPolicyPanel() {
 
   if (!data) return null
 
-  const { policy, decisions } = data
-  const cr = policy.contentRules
+  // Edits build on the working copy: the pending proposal if any, else the live
+  // policy. The live policy is what is actually enforcing right now.
+  const { decisions } = data
+  const working = data.proposed ?? data.policy
+  const cr = working.contentRules
 
   const run = async (key: string, fn: () => Promise<OgrPolicyResponse>) => {
     setBusy(key)
@@ -101,11 +112,37 @@ export function OgrPolicyPanel() {
         <span className="ogr-altitude">{data.altitude} altitude</span>
       </h2>
       <p className="hint ogr-source">
-        {data.usingDefault ? 'Editing creates ' : 'Loaded from '}
-        <code>{data.policyPath}</code>
-        {data.usingDefault ? ' (canonical OGR format).' : ' — changes are saved back to the file.'}
+        {data.usingDefault ? 'Enforcing the built-in default. ' : 'Enforcing '}
+        <code>{data.policyPath}</code>. Edits stage a proposal for approval.
       </p>
       {error && <div className="error ogr-error">{error}</div>}
+
+      {data.pending && (
+        <div className="ogr-pending">
+          <span>
+            <strong>Pending proposal</strong> — not yet enforced. Review the values below, then
+            approve to make them live.
+          </span>
+          <span className="ogr-pending-actions">
+            <button
+              type="button"
+              className="btn-small btn-primary"
+              disabled={busy === '__approve'}
+              onClick={() => run('__approve', approveOgrProposal)}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="btn-small"
+              disabled={busy === '__reject'}
+              onClick={() => run('__reject', rejectOgrProposal)}
+            >
+              Discard
+            </button>
+          </span>
+        </div>
+      )}
 
       <div className="ogr-grid">
         <section className="ogr-card">
@@ -175,7 +212,7 @@ export function OgrPolicyPanel() {
           <h3>Composition</h3>
           <table className="ogr-kv">
             <tbody>
-              {Object.entries(policy.composition).map(([cat, rule]) => (
+              {Object.entries(working.composition).map(([cat, rule]) => (
                 <tr key={cat}>
                   <td>
                     <code>{cat}</code>
@@ -194,7 +231,7 @@ export function OgrPolicyPanel() {
 
       <section className="ogr-card ogr-rules">
         <div className="ogr-rules-head">
-          <h3>Command rules ({policy.configRules.commandRules.length})</h3>
+          <h3>Command rules ({working.configRules.commandRules.length})</h3>
           <button type="button" className="btn-small" onClick={() => setAdding((v) => !v)}>
             {adding ? 'Cancel' : '+ Add rule'}
           </button>
@@ -246,7 +283,7 @@ export function OgrPolicyPanel() {
             </tr>
           </thead>
           <tbody>
-            {policy.configRules.commandRules.map((r) => (
+            {working.configRules.commandRules.map((r) => (
               <tr key={r.id}>
                 <td>
                   <DecisionSelect

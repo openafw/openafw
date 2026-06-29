@@ -415,8 +415,13 @@ export type OgrPolicy = {
 export type OgrPolicyResponse = {
   altitude: string
   policyPath: string
+  proposedPath: string
   usingDefault: boolean
+  pending: boolean
   decisions: OgrDecision[]
   detectors: Array<{ provider: string; handles: string[]; description: string }>
+  // `policy` is the live (enforced) policy; `proposed` is the staged edit
+  // awaiting approval (null when none is pending).
   policy: OgrPolicy
+  proposed: OgrPolicy | null
 }

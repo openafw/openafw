@@ -9,6 +9,7 @@ import { daemonCommand } from './commands/daemon.ts'
 import { keyCommand } from './commands/key.ts'
 import { modelCommand } from './commands/model.ts'
 import { oauthCommand } from './commands/oauth.ts'
+import { ogrCommand } from './commands/ogr.ts'
 import { onboardCommand } from './commands/onboard.ts'
 import { routeCommand } from './commands/route.ts'
 import { runCommand } from './commands/run.ts'
@@ -45,6 +46,7 @@ export async function run(): Promise<void> {
   program.addCommand(tierCommand)
   program.addCommand(keyCommand)
   program.addCommand(routeCommand)
+  program.addCommand(ogrCommand)
   program.addCommand(statusCommand)
   program.addCommand(daemonCommand)
   program.addCommand(uiCommand)

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { type ParseError, parse as parseJsonc } from 'jsonc-parser'
+import { atomicWrite } from '../../core/atomic-file.ts'
 import { logger } from '../../core/logger.ts'
 import { paths } from '../../core/paths.ts'
 import type { Decision } from './types.ts'
@@ -104,6 +105,71 @@ export function loadOgrPolicy(): OgrPolicy {
 /** Drop the cache so the next load re-reads from disk (used by the watcher). */
 export function resetOgrPolicyCache(): void {
   cached = undefined
+}
+
+/** A deep copy of the effective policy, safe to mutate (never aliases the
+ *  shared DEFAULT_POLICY). */
+function currentPolicy(): OgrPolicy {
+  return structuredClone(loadOgrPolicy())
+}
+
+/** Serialize an internal policy to the canonical OGR snake_case file shape, so a
+ *  UI write and a hand-edit stay in the same format. */
+export function toCanonical(p: OgrPolicy): Record<string, unknown> {
+  return {
+    composition: Object.fromEntries(
+      Object.entries(p.composition).map(([cat, r]) => [
+        cat,
+        {
+          strategy: r.strategy,
+          ...(r.quorum ? { quorum: { count: r.quorum.count, min_score: r.quorum.minScore } } : {}),
+          ...(r.onAllFailed ? { on_all_failed: r.onAllFailed } : {}),
+        },
+      ]),
+    ),
+    content_rules: {
+      redact_secrets: p.contentRules.redactSecrets,
+      injection_from_untrusted: p.contentRules.injectionFromUntrusted,
+      injection_from_unverified: p.contentRules.injectionFromUnverified,
+    },
+    config_rules: {
+      ...(p.configRules.secretEnvMarkers
+        ? { secret_env_markers: p.configRules.secretEnvMarkers }
+        : {}),
+      command_rules: p.configRules.commandRules,
+    },
+  }
+}
+
+/** Atomically write `policy` to `~/.afw/ogr.policy.json` in canonical form and
+ *  drop the cache so the next load (and the next packet) sees it. */
+export async function writeOgrPolicy(policy: OgrPolicy): Promise<void> {
+  await atomicWrite(paths.ogrPolicy, `${JSON.stringify(toCanonical(policy), null, 2)}\n`)
+  resetOgrPolicyCache()
+}
+
+export async function patchContentRules(patch: Partial<ContentRules>): Promise<OgrPolicy> {
+  const p = currentPolicy()
+  p.contentRules = { ...p.contentRules, ...patch }
+  await writeOgrPolicy(p)
+  return loadOgrPolicy()
+}
+
+/** Add a command rule, or replace the one with the same id. */
+export async function upsertCommandRule(rule: CommandRule): Promise<OgrPolicy> {
+  const p = currentPolicy()
+  const i = p.configRules.commandRules.findIndex((r) => r.id === rule.id)
+  if (i >= 0) p.configRules.commandRules[i] = rule
+  else p.configRules.commandRules.push(rule)
+  await writeOgrPolicy(p)
+  return loadOgrPolicy()
+}
+
+export async function removeCommandRule(id: string): Promise<OgrPolicy> {
+  const p = currentPolicy()
+  p.configRules.commandRules = p.configRules.commandRules.filter((r) => r.id !== id)
+  await writeOgrPolicy(p)
+  return loadOgrPolicy()
 }
 
 function readPolicy(): OgrPolicy {

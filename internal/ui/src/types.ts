@@ -416,6 +416,7 @@ export type OgrPolicyResponse = {
   altitude: string
   policyPath: string
   usingDefault: boolean
+  decisions: OgrDecision[]
   detectors: Array<{ provider: string; handles: string[]; description: string }>
   policy: OgrPolicy
 }

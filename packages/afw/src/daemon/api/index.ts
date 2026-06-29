@@ -10,7 +10,12 @@ import {
   handlePostMaskingRule,
 } from './masking.ts'
 import { handleListMcp } from './mcp.ts'
-import { handleGetOgrPolicy } from './ogr.ts'
+import {
+  handleDeleteOgrCommandRule,
+  handleGetOgrPolicy,
+  handlePostOgrCommandRule,
+  handlePostOgrContent,
+} from './ogr.ts'
 import { handleListRisk } from './risk.ts'
 import {
   handleDeleteAgent,
@@ -58,6 +63,9 @@ api.get('/runs', handleListRuns)
 api.get('/runs/:id', handleGetRun)
 api.get('/risk', handleListRisk)
 api.get('/ogr/policy', handleGetOgrPolicy)
+api.post('/ogr/content', handlePostOgrContent)
+api.post('/ogr/command-rule', handlePostOgrCommandRule)
+api.delete('/ogr/command-rule', handleDeleteOgrCommandRule)
 api.get('/masking', handleGetMasking)
 api.post('/masking/rule', handlePostMaskingRule)
 api.post('/masking/provider', handlePostMaskingProvider)

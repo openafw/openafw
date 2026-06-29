@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_POLICY, normalizePolicy } from './policy.ts'
+import { DEFAULT_POLICY, normalizePolicy, toCanonical } from './policy.ts'
 
 describe('normalizePolicy', () => {
   it('reads the canonical OGR snake_case shape (openguardrails.com policy.template.json)', () => {
@@ -72,5 +72,28 @@ describe('normalizePolicy', () => {
   it('falls back to the default on a non-object', () => {
     expect(normalizePolicy(null)).toBe(DEFAULT_POLICY)
     expect(normalizePolicy('nope')).toBe(DEFAULT_POLICY)
+  })
+})
+
+describe('toCanonical', () => {
+  it('emits canonical snake_case that round-trips back through normalizePolicy', () => {
+    const canonical = toCanonical(DEFAULT_POLICY)
+    // snake_case on the wire
+    expect(canonical).toHaveProperty('content_rules')
+    expect(canonical).toHaveProperty('config_rules')
+    expect((canonical as { content_rules: Record<string, unknown> }).content_rules).toHaveProperty(
+      'injection_from_untrusted',
+    )
+    // and it parses back to the same internal policy
+    expect(normalizePolicy(canonical)).toEqual(DEFAULT_POLICY)
+  })
+
+  it('round-trips quorum min_score and on_all_failed', () => {
+    const p = normalizePolicy({
+      composition: {
+        'safety.toxicity': { strategy: 'quorum', quorum: { count: 2, min_score: 0.8 } },
+      },
+    })
+    expect(normalizePolicy(toCanonical(p))).toEqual(p)
   })
 })

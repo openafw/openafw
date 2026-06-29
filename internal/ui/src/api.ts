@@ -7,6 +7,7 @@ import type {
   KeysResponse,
   MaskingResponse,
   McpServerItem,
+  OgrDecision,
   OgrPolicyResponse,
   PolicyResponse,
   ReasoningEffort,
@@ -328,10 +329,52 @@ export async function fetchRisk(opts: { limit?: number } = {}): Promise<RiskPage
   return getJson<RiskPage>(`/api/risk?${params.toString()}`)
 }
 
-// ── guard: OGR gateway policy (read-only) ──────────────────────────
+// ── guard: OGR gateway policy ──────────────────────────────────────
 
 export async function fetchOgrPolicy(): Promise<OgrPolicyResponse> {
   return getJson<OgrPolicyResponse>('/api/ogr/policy')
+}
+
+async function postOgr(path: string, body: unknown): Promise<OgrPolicyResponse> {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) {
+    const err = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err.error ?? `HTTP ${r.status}`)
+  }
+  return (await r.json()) as OgrPolicyResponse
+}
+
+export function setOgrContent(patch: {
+  redactSecrets?: boolean
+  injectionFromUntrusted?: OgrDecision
+  injectionFromUnverified?: OgrDecision
+}): Promise<OgrPolicyResponse> {
+  return postOgr('/api/ogr/content', patch)
+}
+
+export function upsertOgrCommandRule(rule: {
+  id?: string
+  regex: string
+  decision: OgrDecision
+  category?: string
+  domain?: 'safety' | 'security'
+  score?: number
+  why?: string
+}): Promise<OgrPolicyResponse> {
+  return postOgr('/api/ogr/command-rule', rule)
+}
+
+export async function deleteOgrCommandRule(id: string): Promise<OgrPolicyResponse> {
+  const r = await fetch(`/api/ogr/command-rule?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!r.ok) {
+    const err = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err.error ?? `HTTP ${r.status}`)
+  }
+  return (await r.json()) as OgrPolicyResponse
 }
 
 // ── guard: credential masking ──────────────────────────────────────

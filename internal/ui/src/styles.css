@@ -3810,6 +3810,52 @@ table.kv-table code.path {
   font-size: 0.74rem;
   word-break: break-all;
 }
+.ogr-error {
+  margin: 0 0 0.75rem;
+}
+.ogr-decision {
+  font-size: 0.78rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.ogr-decision.sev-high {
+  border-color: var(--danger, #d24);
+}
+.ogr-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+.ogr-rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.ogr-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0.5rem 0 0.75rem;
+}
+.ogr-add input {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.8rem;
+}
+.ogr-add-regex {
+  flex: 1;
+  min-width: 200px;
+  font-family: var(--mono, monospace);
+}
 .mask-head {
   display: flex;
   flex-direction: column;

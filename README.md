@@ -22,6 +22,8 @@ or sending anything to the cloud.
 - **Repair** *(emerging)* — spot a Hermes/OpenClaw setup a bad upgrade left
   unstartable and put its config back, format-preserving, with per-edit backups.
 
+<img width="1203" height="550" alt="image" src="https://github.com/user-attachments/assets/40ff9c42-fc32-44c0-a696-ebfdcb5c59cc" />
+
 **Secure**
 
 - **Keep secrets off the wire** — credential masking swaps real API keys, wallet
@@ -32,6 +34,8 @@ or sending anything to the cloud.
   commands in the decoded request/response.
 - *(Gated)* tool-result indirect-prompt-injection detection; relay
   command-tampering and malicious-package / malicious-skill checks on the roadmap.
+  
+<img width="1185" height="863" alt="1" src="https://github.com/user-attachments/assets/e00ba17b-e9a4-4358-964b-06bbe24886b6" />
 
 ## Why a local firewall
 

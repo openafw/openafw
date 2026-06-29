@@ -6,8 +6,12 @@ import type { Decision } from './types.ts'
 
 // The deployer-owned OGR gateway policy: how vendor verdicts compose, and what
 // each reference detector enforces. The SAME policy model is used at the
-// agent-hook and sandbox altitudes; only the bindings differ. Mirrors the
-// reference gateway's policy.json.
+// agent-hook and sandbox altitudes; only the bindings differ.
+//
+// On disk the file is the canonical OGR snake_case shape (composition /
+// content_rules / config_rules), so a user can copy openguardrails.com/skill's
+// policy.template.json verbatim. We normalize it into these camelCase internal
+// types on read (camelCase keys are also accepted as a fallback).
 
 export type CompositionRule = {
   strategy: 'deny-wins' | 'quorum'
@@ -115,19 +119,114 @@ function readPolicy(): OgrPolicy {
     logger.warn(`ogr: ${paths.ogrPolicy} is unparseable; using the default policy`)
     return DEFAULT_POLICY
   }
-  return mergeWithDefault(parsed as Partial<OgrPolicy>)
+  return normalizePolicy(parsed)
 }
 
-// A user file may set only the slots it cares about; fill the rest from default
-// so a partial policy never drops a detector.
-function mergeWithDefault(p: Partial<OgrPolicy>): OgrPolicy {
+type Raw = Record<string, unknown>
+
+// Read either the canonical OGR snake_case key or its camelCase alias.
+function pick(o: Raw, snake: string, camel: string): unknown {
+  return o[snake] ?? o[camel]
+}
+
+/** Map a parsed policy object (canonical snake_case, or camelCase) into the
+ *  internal OgrPolicy, filling any slot the file omits from the default so a
+ *  partial policy never silently drops a detector. Exported for testing. */
+export function normalizePolicy(parsed: unknown): OgrPolicy {
+  if (parsed == null || typeof parsed !== 'object') return DEFAULT_POLICY
+  const p = parsed as Raw
+
+  const composition = asObject(p.composition)
+  const content = asObject(pick(p, 'content_rules', 'contentRules'))
+  const config = asObject(pick(p, 'config_rules', 'configRules'))
+
   return {
-    composition: p.composition ?? DEFAULT_POLICY.composition,
-    contentRules: { ...DEFAULT_POLICY.contentRules, ...(p.contentRules ?? {}) },
-    configRules: {
-      secretEnvMarkers:
-        p.configRules?.secretEnvMarkers ?? DEFAULT_POLICY.configRules.secretEnvMarkers,
-      commandRules: p.configRules?.commandRules ?? DEFAULT_POLICY.configRules.commandRules,
-    },
+    composition: composition ? normalizeComposition(composition) : DEFAULT_POLICY.composition,
+    contentRules: content
+      ? {
+          redactSecrets:
+            asBool(pick(content, 'redact_secrets', 'redactSecrets')) ??
+            DEFAULT_POLICY.contentRules.redactSecrets,
+          injectionFromUntrusted:
+            asDecision(pick(content, 'injection_from_untrusted', 'injectionFromUntrusted')) ??
+            DEFAULT_POLICY.contentRules.injectionFromUntrusted,
+          injectionFromUnverified:
+            asDecision(pick(content, 'injection_from_unverified', 'injectionFromUnverified')) ??
+            DEFAULT_POLICY.contentRules.injectionFromUnverified,
+        }
+      : DEFAULT_POLICY.contentRules,
+    configRules: config
+      ? {
+          secretEnvMarkers:
+            asStringArray(pick(config, 'secret_env_markers', 'secretEnvMarkers')) ??
+            DEFAULT_POLICY.configRules.secretEnvMarkers,
+          commandRules:
+            normalizeCommandRules(pick(config, 'command_rules', 'commandRules')) ??
+            DEFAULT_POLICY.configRules.commandRules,
+        }
+      : DEFAULT_POLICY.configRules,
   }
+}
+
+function normalizeComposition(o: Raw): Record<string, CompositionRule> {
+  const out: Record<string, CompositionRule> = {}
+  for (const [key, v] of Object.entries(o)) {
+    const r = asObject(v)
+    if (!r) continue
+    const quorum = asObject(r.quorum)
+    out[key] = {
+      strategy: r.strategy === 'quorum' ? 'quorum' : 'deny-wins',
+      ...(quorum
+        ? {
+            quorum: {
+              count: Number(quorum.count) || 0,
+              minScore: Number(pick(quorum, 'min_score', 'minScore')) || 0,
+            },
+          }
+        : {}),
+      ...(asDecision(pick(r, 'on_all_failed', 'onAllFailed'))
+        ? { onAllFailed: asDecision(pick(r, 'on_all_failed', 'onAllFailed')) }
+        : {}),
+    }
+  }
+  return out
+}
+
+// command_rules field names are single-word in both styles (id/regex/category/
+// domain/decision/score/why) — pass through the well-formed entries.
+function normalizeCommandRules(v: unknown): CommandRule[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out: CommandRule[] = []
+  for (const item of v) {
+    const r = asObject(item)
+    const decision = asDecision(r?.decision)
+    if (!r || typeof r.regex !== 'string' || !decision) continue
+    out.push({
+      id: typeof r.id === 'string' ? r.id : r.regex,
+      regex: r.regex,
+      category: typeof r.category === 'string' ? r.category : 'security.unspecified',
+      domain: r.domain === 'safety' ? 'safety' : 'security',
+      decision,
+      score: Number(r.score) || 0,
+      why: typeof r.why === 'string' ? r.why : '',
+    })
+  }
+  return out
+}
+
+const DECISIONS: readonly Decision[] = ['allow', 'modify', 'redact', 'require_approval', 'block']
+
+function asObject(v: unknown): Raw | undefined {
+  return v != null && typeof v === 'object' && !Array.isArray(v) ? (v as Raw) : undefined
+}
+function asBool(v: unknown): boolean | undefined {
+  return typeof v === 'boolean' ? v : undefined
+}
+function asDecision(v: unknown): Decision | undefined {
+  return typeof v === 'string' && (DECISIONS as readonly string[]).includes(v)
+    ? (v as Decision)
+    : undefined
+}
+function asStringArray(v: unknown): string[] | undefined {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : undefined
 }

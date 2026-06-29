@@ -60,6 +60,10 @@ export const paths = {
   // Credential-masking config — which built-in mask rules are disabled.
   // See core/masking.ts.
   masking: join(AFW_HOME, 'masking.json'),
+  // OGR gateway policy — composition + per-detector config the deployer owns.
+  // afw is the OGR *gateway* altitude; this file drives its detectors. See
+  // daemon/ogr/. Absent → the bundled default policy is used.
+  ogrPolicy: join(AFW_HOME, 'ogr.policy.json'),
   // Tool providers (web_search backends, etc.) — see core/tool-providers.ts.
   // The afw-tools MCP server reads this file at request time to decide
   // which backend to use for each capability.

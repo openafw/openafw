@@ -10,6 +10,7 @@ import {
   handlePostMaskingRule,
 } from './masking.ts'
 import { handleListMcp } from './mcp.ts'
+import { handleGetOgrPolicy } from './ogr.ts'
 import { handleListRisk } from './risk.ts'
 import {
   handleDeleteAgent,
@@ -56,6 +57,7 @@ export const api = new Hono()
 api.get('/runs', handleListRuns)
 api.get('/runs/:id', handleGetRun)
 api.get('/risk', handleListRisk)
+api.get('/ogr/policy', handleGetOgrPolicy)
 api.get('/masking', handleGetMasking)
 api.post('/masking/rule', handlePostMaskingRule)
 api.post('/masking/provider', handlePostMaskingProvider)

@@ -3747,6 +3747,69 @@ table.kv-table code.path {
   padding: 1rem 1.1rem;
   margin-bottom: 1.75rem;
 }
+.ogr-panel .mask-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.ogr-altitude {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+.ogr-source {
+  margin: 0.35rem 0 0.9rem;
+}
+.ogr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+.ogr-card h3 {
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+  color: var(--fg-muted);
+}
+.ogr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ogr-list code {
+  margin-right: 0.4rem;
+}
+.ogr-handles {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+.ogr-desc {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  margin-top: 0.1rem;
+}
+.ogr-kv {
+  border-collapse: collapse;
+  width: 100%;
+}
+.ogr-kv td {
+  padding: 0.2rem 0.4rem 0.2rem 0;
+  font-size: 0.82rem;
+  vertical-align: middle;
+}
+.ogr-rules {
+  margin-top: 0.5rem;
+}
+.ogr-regex {
+  font-size: 0.74rem;
+  word-break: break-all;
+}
 .mask-head {
   display: flex;
   flex-direction: column;

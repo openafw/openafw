@@ -7,6 +7,7 @@ import type {
   KeysResponse,
   MaskingResponse,
   McpServerItem,
+  OgrPolicyResponse,
   PolicyResponse,
   ReasoningEffort,
   Registry,
@@ -325,6 +326,12 @@ export async function fetchRisk(opts: { limit?: number } = {}): Promise<RiskPage
   const params = new URLSearchParams()
   params.set('limit', String(opts.limit ?? 100))
   return getJson<RiskPage>(`/api/risk?${params.toString()}`)
+}
+
+// ── guard: OGR gateway policy (read-only) ──────────────────────────
+
+export async function fetchOgrPolicy(): Promise<OgrPolicyResponse> {
+  return getJson<OgrPolicyResponse>('/api/ogr/policy')
 }
 
 // ── guard: credential masking ──────────────────────────────────────

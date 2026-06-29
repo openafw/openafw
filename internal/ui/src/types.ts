@@ -378,3 +378,44 @@ export type MaskingResponse = {
   rules: MaskingRule[]
   providers: MaskingProvider[]
 }
+
+// ── guard (OGR gateway policy) ─────────────────────────────────────
+
+export type OgrDecision = 'allow' | 'modify' | 'redact' | 'require_approval' | 'block'
+
+export type OgrCommandRule = {
+  id: string
+  regex: string
+  category: string
+  domain: 'safety' | 'security'
+  decision: OgrDecision
+  score: number
+  why: string
+}
+
+export type OgrCompositionRule = {
+  strategy: 'deny-wins' | 'quorum'
+  quorum?: { count: number; minScore: number }
+  onAllFailed?: OgrDecision
+}
+
+export type OgrPolicy = {
+  composition: Record<string, OgrCompositionRule>
+  contentRules: {
+    redactSecrets: boolean
+    injectionFromUntrusted: OgrDecision
+    injectionFromUnverified: OgrDecision
+  }
+  configRules: {
+    secretEnvMarkers?: string[]
+    commandRules: OgrCommandRule[]
+  }
+}
+
+export type OgrPolicyResponse = {
+  altitude: string
+  policyPath: string
+  usingDefault: boolean
+  detectors: Array<{ provider: string; handles: string[]; description: string }>
+  policy: OgrPolicy
+}

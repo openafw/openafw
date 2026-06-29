@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchRisk } from '../api'
 import { Time, shortId } from '../components/Format'
 import { MaskingPanel } from '../components/MaskingPanel'
+import { OgrPolicyPanel } from '../components/OgrPolicyPanel'
 import type { RiskFinding, RiskPage } from '../types'
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, warn: 1, info: 2 }
@@ -53,6 +54,8 @@ export function Guard() {
 
   return (
     <div className="guard">
+      <OgrPolicyPanel />
+
       <MaskingPanel />
 
       <h2 className="mask-title guard-findings-title">Risk findings</h2>

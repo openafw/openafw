@@ -24,6 +24,7 @@ import type {
   TiersResponse,
   ToolProvidersResponse,
   WireStatus,
+  MaskingScope,
 } from './types'
 
 async function getJson<T>(path: string): Promise<T> {
@@ -430,6 +431,7 @@ export type CustomMaskingInput = {
   flags?: string
   group?: number
   fake: string
+  scope?: MaskingScope
 }
 
 export function upsertMaskingCustom(rule: CustomMaskingInput): Promise<MaskingResponse> {

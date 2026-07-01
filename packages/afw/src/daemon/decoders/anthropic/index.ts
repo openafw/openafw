@@ -92,6 +92,7 @@ export const anthropicDecoder: Decoder = {
       error: errorMsg,
       ...(input.resStatus >= 400 ? { errorHeaders: headersToObject(input.resHeaders) } : {}),
       ...(input.orchestration ? { orchestration: input.orchestration } : {}),
+      ...(input.guardEdits?.length ? { guardEdits: input.guardEdits } : {}),
     }
 
     const usd = computeCost({

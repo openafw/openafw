@@ -106,6 +106,9 @@ async function printOverview(): Promise<void> {
   logger.print('  afw tier             map Tall/Grande/Venti to your models')
   logger.print('  afw key add          mint an API key for an OpenAI/Anthropic agent')
   logger.print('  afw ui               open the dashboard in your browser')
+  logger.print('  afw daemon start     start the daemon in the background')
+  logger.print('  afw daemon stop      stop the running daemon')
+  logger.print('  afw daemon restart   restart the daemon in the background')
   logger.print('  afw status           daemon + tap health')
   logger.print('  afw --help           all commands')
 }

@@ -153,6 +153,7 @@ export const openaiChatDecoder: Decoder = {
       error: errorMsg,
       ...(input.resStatus >= 400 ? { errorHeaders: headersToObject(input.resHeaders) } : {}),
       ...(input.orchestration ? { orchestration: input.orchestration } : {}),
+      ...(input.guardEdits?.length ? { guardEdits: input.guardEdits } : {}),
     }
 
     const messages = Array.isArray(req.messages) ? req.messages : []

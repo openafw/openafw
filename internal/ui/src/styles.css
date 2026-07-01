@@ -1501,6 +1501,12 @@ a.nav-brand:hover {
   overflow: auto;
   background: transparent;
 }
+.msg-guard-highlight {
+  background: rgba(245, 181, 0, 0.28);
+  color: #fff7cc;
+  border-radius: 3px;
+  padding: 0.02rem 0.12rem;
+}
 
 .msg-card-toolcalls {
   display: flex;
@@ -1509,6 +1515,74 @@ a.nav-brand:hover {
   padding: 0.5rem 0.75rem 0.65rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(0, 0, 0, 0.12);
+}
+
+.msg-card-edits {
+  padding: 0.55rem 0.75rem 0.7rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(245, 181, 0, 0.06);
+}
+.msg-card-edits-title {
+  margin-bottom: 0.45rem;
+  color: #fcd34d;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.msg-edit {
+  border: 1px solid rgba(245, 181, 0, 0.22);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+.msg-edit + .msg-edit {
+  margin-top: 0.5rem;
+}
+.msg-edit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid rgba(245, 181, 0, 0.14);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.msg-edit-meta code {
+  color: #fde68a;
+  background: transparent;
+  padding: 0;
+}
+.msg-edit-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0;
+}
+.msg-edit-label {
+  padding: 0.5rem 0.55rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.msg-edit-text {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  color: #e6edf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
+}
+.msg-edit-before {
+  background: rgba(248, 113, 113, 0.06);
+}
+.msg-edit-after {
+  background: rgba(74, 222, 128, 0.06);
 }
 
 .toolcall-card {
@@ -3929,6 +4003,11 @@ table.kv-table code.path {
   gap: 0.4rem;
   margin-left: auto;
 }
+.mask-replacement-edit {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
 .mask-fake-input {
   width: 100%;
   min-width: 16rem;
@@ -3938,7 +4017,7 @@ table.kv-table code.path {
   border-radius: 4px;
   padding: 0.2rem 0.4rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
+  font-size: 0.82rem;
 }
 .mask-fake-input:focus {
   color: var(--fg);
@@ -3947,8 +4026,13 @@ table.kv-table code.path {
 }
 .mask-pat {
   color: var(--thinking);
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   word-break: break-all;
+}
+.mask-desc-text {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
 }
 .mask-badge {
   margin-left: 0.4rem;
@@ -3967,13 +4051,14 @@ table.kv-table code.path {
   align-items: center;
   margin-top: 0.6rem;
 }
-.mask-add-form input {
+.mask-add-form input,
+.mask-add-form select {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.25rem 0.45rem;
-  font-size: 0.8rem;
+  font-size: 0.86rem;
   min-width: 14rem;
 }
 .mask-add-form input.mask-group-input {

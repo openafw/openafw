@@ -363,6 +363,12 @@ export type MaskingRule = {
   pattern: string
   flags?: string
   group?: number
+  scope?: MaskingScope
+}
+
+export type MaskingScope = {
+  role: 'system' | 'developer' | 'user' | 'assistant' | 'any'
+  message: 'first' | 'all'
 }
 
 // A provider the masking is configured per: `id` is the wire key (registry

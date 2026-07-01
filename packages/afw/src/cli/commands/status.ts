@@ -42,7 +42,7 @@ export const statusCommand = new Command('status')
     } catch {
       logger.print('Daemon:    not responding on /health')
       if (sState.state === 'not-installed') {
-        logger.print('  Start it with `afw daemon`, or just launch an agent (e.g. `afw claude`).')
+        logger.print('  Start it with `afw daemon start`, or just launch an agent (e.g. `afw claude`).')
       }
       process.exitCode = 1
     }

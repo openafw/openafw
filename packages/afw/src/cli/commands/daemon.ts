@@ -5,21 +5,28 @@ import { startDaemon } from '../../daemon/index.ts'
 import { ensureDaemonRunning } from '../launch/daemon-autostart.ts'
 import { stopDaemon } from '../util/daemon-control.ts'
 
-type DaemonOptions = {
+type DaemonRunOptions = {
   port?: string
   logLevel?: LogLevel
 }
 
 export const daemonCommand = new Command('daemon')
-  .description('Run the afw daemon in the foreground, or stop/restart a running one.')
-  .option('--port <port>', 'Override default port 9877.')
-  .option('--log-level <level>', "'silent' | 'error' | 'warn' | 'info' | 'debug'")
-  // Bare `afw daemon` runs in the foreground — the shape launchd/systemd
-  // and the on-demand autostart expect. Subcommands manage a running one.
-  .action(async (options: DaemonOptions) => {
-    if (options.logLevel) logger.setLevel(options.logLevel)
-    const port = options.port ? Number.parseInt(options.port, 10) : undefined
-    await startDaemon({ port })
+  .description('Manage the afw daemon.')
+  .action(async () => {
+    printDaemonHelp()
+  })
+
+daemonCommand
+  .command('start')
+  .description('Start the daemon in the background.')
+  .action(async () => {
+    try {
+      await ensureDaemonRunning({ quiet: true })
+      logger.print('✓ daemon started')
+    } catch (e) {
+      logger.print(`error: ${(e as Error).message}`)
+      process.exit(1)
+    }
   })
 
 daemonCommand
@@ -44,3 +51,23 @@ daemonCommand
       process.exit(1)
     }
   })
+
+daemonCommand
+  .command('run', { hidden: true })
+  .description('Run the daemon in the foreground.')
+  .option('--port <port>', 'Override default port 9877.')
+  .option('--log-level <level>', "'silent' | 'error' | 'warn' | 'info' | 'debug'")
+  .action(async (options: DaemonRunOptions) => {
+    if (options.logLevel) logger.setLevel(options.logLevel)
+    const port = options.port ? Number.parseInt(options.port, 10) : undefined
+    await startDaemon({ port })
+  })
+
+function printDaemonHelp(): void {
+  logger.print('afw daemon manages the background daemon.')
+  logger.print('')
+  logger.print('Common commands:')
+  logger.print('  afw daemon start     start the daemon in the background')
+  logger.print('  afw daemon stop      stop the running daemon')
+  logger.print('  afw daemon restart   restart the daemon in the background')
+}

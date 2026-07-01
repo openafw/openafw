@@ -1,5 +1,5 @@
 import type { AgentId } from '../../core/agent.ts'
-import type { Orchestration } from '../../core/packet.ts'
+import type { GuardEdit, Orchestration } from '../../core/packet.ts'
 
 export type DecodeInput = {
   agent: AgentId
@@ -32,6 +32,8 @@ export type DecodeInput = {
   startedAt: number
   /** Set when the routing orchestrator produced this call. */
   orchestration?: Orchestration
+  /** Request text edits applied by guard/masking before the upstream saw it. */
+  guardEdits?: GuardEdit[]
 }
 
 export interface Decoder {

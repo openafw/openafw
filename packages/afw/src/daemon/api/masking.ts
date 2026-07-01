@@ -102,14 +102,20 @@ export async function handlePostMaskingCustom(c: Context): Promise<Response> {
   ) {
     return c.json({ error: 'masking: expected { id, label, pattern, fake }' }, 400)
   }
+  const parsedPattern = parseRegexInput(b.pattern)
   const rule: CustomRuleConfig = {
     id: b.id,
     label: typeof b.label === 'string' && b.label ? b.label : b.id,
     ...(typeof b.description === 'string' ? { description: b.description } : {}),
-    pattern: b.pattern,
-    ...(typeof b.flags === 'string' ? { flags: b.flags } : {}),
+    pattern: parsedPattern.pattern,
+    ...(typeof b.flags === 'string'
+      ? { flags: b.flags }
+      : parsedPattern.flags
+        ? { flags: parsedPattern.flags }
+        : {}),
     ...(typeof b.group === 'number' ? { group: b.group } : {}),
     fake: b.fake,
+    ...(isMaskingScope(b.scope) ? { scope: b.scope } : {}),
   }
   const cfg = await upsertCustomRule(rule)
   // upsert is a no-op on a bad regex / built-in id collision — report that.
@@ -117,6 +123,44 @@ export async function handlePostMaskingCustom(c: Context): Promise<Response> {
     return c.json({ error: 'masking: invalid pattern, or id collides with a built-in' }, 400)
   }
   return c.json(buildResponse(cfg))
+}
+
+function parseRegexInput(input: string): { pattern: string; flags?: string } {
+  const trimmed = input.trim()
+  if (!trimmed.startsWith('/')) return { pattern: input }
+
+  let slash = -1
+  for (let i = trimmed.length - 1; i > 0; i--) {
+    if (trimmed[i] !== '/') continue
+    let escapes = 0
+    for (let j = i - 1; j >= 0 && trimmed[j] === '\\'; j--) escapes++
+    if (escapes % 2 === 0) {
+      slash = i
+      break
+    }
+  }
+  if (slash <= 0) return { pattern: input }
+
+  const flags = trimmed.slice(slash + 1)
+  if (!/^[A-Za-z]*$/.test(flags)) return { pattern: input }
+  return {
+    pattern: trimmed.slice(1, slash),
+    ...(flags ? { flags } : {}),
+  }
+}
+
+function isMaskingScope(v: unknown): v is CustomRuleConfig['scope'] {
+  return (
+    v != null &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    typeof (v as { role?: unknown }).role === 'string' &&
+    ['system', 'developer', 'user', 'assistant', 'any'].includes(
+      (v as { role: string }).role,
+    ) &&
+    typeof (v as { message?: unknown }).message === 'string' &&
+    ['first', 'all'].includes((v as { message: string }).message)
+  )
 }
 
 /** DELETE /api/masking/custom?id=… — remove a user-defined credential type. */

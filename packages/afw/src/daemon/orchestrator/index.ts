@@ -1276,6 +1276,7 @@ async function runStreamingSwap(
       durMs: attempt.durMs,
       startedAtWall: attempt.startedAtWall,
       upstreamUrl: attempt.upstreamUrl,
+      ...(attempt.guardEdits?.length ? { guardEdits: attempt.guardEdits } : {}),
     }
     await captureSingle(
       {
@@ -1315,6 +1316,7 @@ async function runStreamingSwap(
         durMs: performance.now() - orchT0,
         startedAtWall: orchStartWall,
         upstreamUrl: attempt.upstreamUrl,
+        ...(attempt.guardEdits?.length ? { guardEdits: attempt.guardEdits } : {}),
       }
       await captureSingle(
         {
@@ -1463,6 +1465,7 @@ async function runSameProtocolSwap(
       resBody: toDecoder,
       startedAt: t0,
       orchestration,
+      ...(masked?.edits.length ? { guardEdits: masked.edits } : {}),
     })
     .catch((err) => {
       logger.error(`decoder ${ctx.decoder} failed: ${(err as Error).message}`)

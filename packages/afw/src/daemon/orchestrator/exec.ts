@@ -13,6 +13,7 @@ import type {
   ProviderEntry,
   ReasoningEffort,
 } from '../../core/model-registry.ts'
+import type { GuardEdit } from '../../core/packet.ts'
 import type { DecoderKind } from '../../core/routes.ts'
 import { getSecret } from '../../core/secrets.ts'
 import { makeRestoreTransform, maskText, restoreText } from '../proxy/credential-mask.ts'
@@ -474,7 +475,7 @@ function sleep(ms: number): Promise<void> {
 async function fetchBufferedWithTransientRetries(
   build: () => Promise<BuiltRequest>,
   label: string,
-): Promise<{ res: Response; text: string }> {
+): Promise<{ res: Response; text: string; guardEdits: GuardEdit[] }> {
   let lastErr: unknown
   for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
     let built: BuiltRequest
@@ -483,7 +484,7 @@ async function fetchBufferedWithTransientRetries(
       const res = await fetch(built.request)
       const text = restoreText(await res.text(), built.restore)
       if (!isTransientUpstreamStatus(res.status) || attempt === TRANSIENT_RETRY_DELAYS_MS.length) {
-        return { res, text }
+        return { res, text, guardEdits: built.guardEdits ?? [] }
       }
       const delay = retryDelayMs(attempt, res)
       logger.warn(
@@ -508,14 +509,14 @@ async function fetchBufferedWithTransientRetries(
 async function fetchStreamWithTransientRetries(
   build: () => Promise<BuiltRequest>,
   label: string,
-): Promise<{ res: Response; restore: Map<string, string> }> {
+): Promise<{ res: Response; restore: Map<string, string>; guardEdits: GuardEdit[] }> {
   let lastErr: unknown
   for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
     try {
       const built = await build()
       const res = await fetch(built.request)
       if (!isTransientUpstreamStatus(res.status) || attempt === TRANSIENT_RETRY_DELAYS_MS.length) {
-        return { res, restore: built.restore }
+        return { res, restore: built.restore, guardEdits: built.guardEdits ?? [] }
       }
       await res.text().catch(() => '')
       const delay = retryDelayMs(attempt, res)
@@ -548,6 +549,7 @@ export type AttemptResult =
       durMs: number
       startedAtWall: number
       upstreamUrl: string
+      guardEdits?: GuardEdit[]
     }
   | {
       ok: false
@@ -560,11 +562,12 @@ export type AttemptResult =
       durMs: number
       startedAtWall: number
       upstreamUrl: string
+      guardEdits?: GuardEdit[]
     }
 
 /** A built upstream request plus the fake→real map for restoring its response
  *  (empty when masking is off for the member's provider). */
-type BuiltRequest = { request: Request; restore: Map<string, string> }
+type BuiltRequest = { request: Request; restore: Map<string, string>; guardEdits?: GuardEdit[] }
 
 /** Build the upstream HTTP request for a routed member: translate the client
  *  request into the member's wire format, force the model and the stream flag,
@@ -667,6 +670,7 @@ async function buildUpstreamRequest(
       body: masked?.text ?? bodyText,
     }),
     restore: masked?.restore ?? new Map<string, string>(),
+    ...(masked?.edits.length ? { guardEdits: masked.edits } : {}),
   }
 }
 
@@ -699,7 +703,7 @@ export async function execAttempt(
   const label = `${member.provider.id}/${member.model.id}`
 
   try {
-    let { res, text } = await fetchBufferedWithTransientRetries(
+    let { res, text, guardEdits } = await fetchBufferedWithTransientRetries(
       () => buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, false),
       label,
     )
@@ -712,7 +716,11 @@ export async function execAttempt(
     if (res.status >= 400 && isOverflowStatus(res.status)) {
       const budget = safeRetryBudget(text, member.model)
       if (budget != null) {
-        const { res: res2, text: text2 } = await fetchBufferedWithTransientRetries(
+        const {
+          res: res2,
+          text: text2,
+          guardEdits: guardEdits2,
+        } = await fetchBufferedWithTransientRetries(
           () =>
             buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, false, budget),
           `${label} overflow-retry`,
@@ -723,6 +731,7 @@ export async function execAttempt(
           )
           res = res2
           text = text2
+          guardEdits = guardEdits2
         }
       }
     }
@@ -738,6 +747,7 @@ export async function execAttempt(
         durMs,
         startedAtWall,
         upstreamUrl,
+        ...(guardEdits.length ? { guardEdits } : {}),
       }
     }
 
@@ -753,6 +763,7 @@ export async function execAttempt(
         durMs,
         startedAtWall,
         upstreamUrl,
+        ...(guardEdits.length ? { guardEdits } : {}),
       }
     }
 
@@ -764,6 +775,7 @@ export async function execAttempt(
       durMs,
       startedAtWall,
       upstreamUrl,
+      ...(guardEdits.length ? { guardEdits } : {}),
     }
   } catch (err) {
     return {
@@ -787,6 +799,7 @@ export type StreamAttempt =
       durMs: number
       startedAtWall: number
       upstreamUrl: string
+      guardEdits?: GuardEdit[]
     }
   | {
       ok: false
@@ -796,6 +809,7 @@ export type StreamAttempt =
       durMs: number
       startedAtWall: number
       upstreamUrl: string
+      guardEdits?: GuardEdit[]
     }
 
 /** Run one streaming upstream call against a resolved member: translate the
@@ -816,7 +830,7 @@ export async function execStream(
   const label = `${member.provider.id}/${member.model.id}`
 
   try {
-    const { res, restore } = await fetchStreamWithTransientRetries(
+    const { res, restore, guardEdits } = await fetchStreamWithTransientRetries(
       () => buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, true),
       label,
     )
@@ -827,7 +841,11 @@ export async function execStream(
       const text = restoreText(await res.text(), restore)
       const budget = safeRetryBudget(text, member.model)
       if (budget != null) {
-        const { res: res2, restore: restore2 } = await fetchStreamWithTransientRetries(
+        const {
+          res: res2,
+          restore: restore2,
+          guardEdits: guardEdits2,
+        } = await fetchStreamWithTransientRetries(
           () =>
             buildUpstreamRequest(member, clientApi, clientRequest, ctx, upstreamUrl, true, budget),
           `${label} overflow-retry`,
@@ -843,6 +861,7 @@ export async function execStream(
             durMs: performance.now() - t0,
             startedAtWall,
             upstreamUrl,
+            ...(guardEdits2.length ? { guardEdits: guardEdits2 } : {}),
           }
         }
       }
@@ -854,6 +873,7 @@ export async function execStream(
         durMs: performance.now() - t0,
         startedAtWall,
         upstreamUrl,
+        ...(guardEdits.length ? { guardEdits } : {}),
       }
     }
 
@@ -869,6 +889,7 @@ export async function execStream(
         durMs,
         startedAtWall,
         upstreamUrl,
+        ...(guardEdits.length ? { guardEdits } : {}),
       }
     }
 
@@ -879,6 +900,7 @@ export async function execStream(
       durMs,
       startedAtWall,
       upstreamUrl,
+      ...(guardEdits.length ? { guardEdits } : {}),
     }
   } catch (err) {
     return {

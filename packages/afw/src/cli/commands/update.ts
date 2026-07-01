@@ -31,7 +31,7 @@ export const updateCommand = new Command('update')
       })
       info = (await res.json()) as UpdateInfo
     } catch {
-      logger.print('Daemon not reachable. Start it with `afw daemon`, then retry.')
+      logger.print('Daemon not reachable. Start it with `afw daemon start`, then retry.')
       process.exitCode = 1
       return
     }

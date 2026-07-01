@@ -37,8 +37,19 @@ export type MaskingRule = {
   group?: number
   /** The fixed fake swapped in for the first distinct real value of this type.
    *  Further distinct values of the same type get a `_N` suffix so the restore
-   *  stays unambiguous. Shaped and filled so it reads as a genuine credential. */
+   *  stays unambiguous. Shaped and filled so it reads as a genuine credential.
+   *  For custom rewrite-style rules this may also use JS regex replacement
+   *  captures such as `$1` or `$<name>`; those dynamic replacements are not
+   *  response-restored. */
   fake: string
+  /** Optional scope for custom rewrite/masking rules. Built-ins omit this and
+   *  run over the whole body. */
+  scope?: MaskingScope
+}
+
+export type MaskingScope = {
+  role: 'system' | 'developer' | 'user' | 'assistant' | 'any'
+  message: 'first' | 'all'
 }
 
 // why: the built-in fakes are real-looking on purpose (correct shape + content,
@@ -171,6 +182,7 @@ export type CustomRuleConfig = {
   flags?: string
   group?: number
   fake: string
+  scope?: MaskingScope
 }
 
 export type MaskingConfig = {
@@ -211,6 +223,7 @@ export function compileCustomRule(c: CustomRuleConfig): MaskingRule | null {
       pattern,
       ...(typeof c.group === 'number' ? { group: c.group } : {}),
       fake: c.fake,
+      ...(isMaskingScope(c.scope) ? { scope: c.scope } : {}),
     }
   } catch {
     return null
@@ -234,6 +247,7 @@ export function normalizeMaskingConfig(raw: unknown): MaskingConfig {
         ...(typeof c.flags === 'string' ? { flags: c.flags } : {}),
         ...(typeof c.group === 'number' ? { group: c.group } : {}),
         fake: String(c.fake ?? ''),
+        ...(isMaskingScope(c.scope) ? { scope: c.scope } : {}),
       }
       // keep only rules that actually compile and don't collide
       if (!compileCustomRule(cfg) || customIds.has(cfg.id)) continue
@@ -426,8 +440,9 @@ export function ruleCatalog(cfg: MaskingConfig): RuleCatalogEntry[] {
       fake: r.fake,
       custom: c != null,
       pattern: c ? c.pattern : r.pattern.source,
-      ...(c?.flags ? { flags: c.flags } : {}),
+      ...(r.pattern.flags ? { flags: r.pattern.flags } : {}),
       ...(typeof r.group === 'number' ? { group: r.group } : {}),
+      ...(c?.scope ? { scope: c.scope } : {}),
     }
   })
 }
@@ -467,11 +482,28 @@ export function maskCredentials(text: string, rules: readonly MaskingRule[]): Ma
     }
     masked = masked.replace(re, (...args) => {
       const whole = args[0] as string
+      const hasGroups = isObj(args.at(-1))
+      const groups = hasGroups ? (args.at(-1) as Record<string, string>) : undefined
+      const input = args.at(hasGroups ? -2 : -1)
+      const offset = Number(args.at(hasGroups ? -3 : -2))
       const real = rule.group != null ? (args[rule.group] as string | undefined) : whole
       if (typeof real !== 'string' || real.length === 0) return whole
       // Never re-mask a fake we already inserted (a later rule could otherwise
       // match it).
       if (restore.has(real)) return whole
+
+      const dynamicReplacement = replacementUsesMatch(rule.fake)
+      if (dynamicReplacement) {
+        const replacement = expandReplacement(rule.fake, {
+          whole,
+          captures: args.slice(1, groups ? -3 : -2),
+          groups,
+          offset: Number.isFinite(offset) ? offset : 0,
+          input: typeof input === 'string' ? input : masked,
+        })
+        hits[rule.id] = (hits[rule.id] ?? 0) + 1
+        return rule.group != null ? whole.replace(real, replacement) : replacement
+      }
 
       let fake = realToFake.get(real)
       if (!fake) {
@@ -488,4 +520,44 @@ export function maskCredentials(text: string, rules: readonly MaskingRule[]): Ma
   }
 
   return { masked, restore, hits }
+}
+
+function replacementUsesMatch(replacement: string): boolean {
+  // "$$" is an escaped literal dollar, not a match reference.
+  return /(^|[^$])\$(?:&|`|'|<[^>]+>|\d{1,2})/.test(replacement)
+}
+
+function expandReplacement(
+  replacement: string,
+  match: {
+    whole: string
+    captures: unknown[]
+    groups?: Record<string, string>
+    offset: number
+    input: string
+  },
+): string {
+  return replacement.replace(/\$(\$|&|`|'|<([^>]+)>|(\d{1,2}))/g, (token, kind, name, num) => {
+    if (kind === '$') return '$'
+    if (kind === '&') return match.whole
+    if (kind === '`') return match.input.slice(0, match.offset)
+    if (kind === "'") return match.input.slice(match.offset + match.whole.length)
+    if (typeof name === 'string') return match.groups?.[name] ?? token
+    const i = Number(num)
+    if (!Number.isInteger(i) || i <= 0 || i > match.captures.length) return token
+    const capture = match.captures[i - 1]
+    return typeof capture === 'string' ? capture : ''
+  })
+}
+
+function isMaskingScope(v: unknown): v is MaskingScope {
+  if (!isObj(v)) return false
+  const role = v.role
+  const message = v.message
+  return (
+    typeof role === 'string' &&
+    ['system', 'developer', 'user', 'assistant', 'any'].includes(role) &&
+    typeof message === 'string' &&
+    ['first', 'all'].includes(message)
+  )
 }

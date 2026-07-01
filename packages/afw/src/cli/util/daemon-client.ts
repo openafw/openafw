@@ -6,7 +6,7 @@ import { DAEMON_BASE_URL } from '../../core/paths.ts'
 
 export class DaemonUnreachableError extends Error {
   constructor() {
-    super('cannot reach the afw daemon — start it with `afw daemon`')
+    super('cannot reach the afw daemon — start it with `afw daemon start`')
     this.name = 'DaemonUnreachableError'
   }
 }

@@ -55,17 +55,22 @@ INSPECT
   afw                         First-run setup, or a one-glance overview.
   afw ui                      Open the dashboard in your browser.
   afw status                  Daemon + tap health.
+  afw daemon start            Start the daemon in the background.
+  afw daemon stop             Stop the daemon.
+  afw daemon restart          Restart the daemon.
 
 UPDATE
   afw update                  Update afw to the latest version.
 
 INTERNAL  (users don't call these directly)
-  afw daemon                  Run the daemon in foreground (launchd target).
+  afw daemon run              Run the daemon in foreground (service target).
   afw tap --agent X --server Y -- <cmd> [args…]   stdio MCP wrapper.
 ```
 
 Bare `afw` runs first-run setup on a fresh install, then prints a one-glance
-overview on later runs. Open the dashboard with `afw ui`.
+overview on later runs, including common commands such as `afw ui` and
+`afw daemon start|stop|restart`. Open the dashboard with `afw ui`; it starts
+the daemon automatically when needed.
 
 ---
 
@@ -245,10 +250,26 @@ in `~/.afw/config.json`.
 
 ---
 
-## `afw daemon` (internal)
+## `afw daemon`
 
-Run the daemon in the foreground. Auto-started by the launchers; also called by
-launchd / systemd.
+Manage the daemon. Bare `afw daemon` prints the common daemon operations instead
+of occupying the terminal.
+
+```
+USAGE
+  afw daemon
+  afw daemon start
+  afw daemon stop
+  afw daemon restart
+```
+
+`afw daemon start` starts the daemon in the background and returns. `afw ui` and
+the per-agent launchers also start it automatically when needed.
+
+### `afw daemon run` (internal)
+
+Run the daemon in the foreground. Auto-started by `afw daemon start`, the
+launchers, and launchd / systemd.
 
 ```
 OPTIONS

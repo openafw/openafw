@@ -3,6 +3,7 @@ import process from 'node:process'
 import { Command } from 'commander'
 import { logger } from '../../core/logger.ts'
 import { DAEMON_BASE_URL } from '../../core/paths.ts'
+import { ensureDaemonRunning } from '../launch/daemon-autostart.ts'
 
 type UiOptions = {
   printUrl: boolean
@@ -19,11 +20,9 @@ export async function openUi(opts: { noOpen: boolean }): Promise<void> {
   const url = DAEMON_BASE_URL
 
   try {
-    const r = await fetch(`${url}/health`)
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  } catch {
-    logger.print(`afw daemon is not running at ${url}.`)
-    logger.print('Start it with `afw daemon`, or just launch an agent (e.g. `afw claude`).')
+    await ensureDaemonRunning()
+  } catch (e) {
+    logger.print(`error: ${(e as Error).message}`)
     process.exitCode = 1
     return
   }

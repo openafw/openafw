@@ -302,6 +302,7 @@ export async function handleWireRequest(c: Context): Promise<Response> {
       resHeaders: upstreamHeaders,
       resBody: toDecoder,
       startedAt: t0,
+      ...(masked?.edits.length ? { guardEdits: masked.edits } : {}),
     })
     .catch((err) => {
       logger.error(`decoder ${route.decoder} failed: ${(err as Error).message}`)

@@ -175,6 +175,27 @@ describe('fake overrides + custom rules', () => {
     expect(restore.get('INT-00000000')).toBe('INT-12345678')
   })
 
+  it('supports regex capture replacements for custom rewrite-style rules', () => {
+    const cfg: MaskingConfig = {
+      ...emptyCfg(),
+      custom: [
+        {
+          id: 'normalize-date',
+          label: 'Normalize date',
+          pattern: "Today[^A-Za-z0-9]*s date is (\\d{4})/(\\d{2})/(\\d{2})",
+          fake: "Today's date is $1-$2-$3",
+        },
+      ],
+    }
+    const { masked, restore, hits } = maskCredentials(
+      "Today\u2019s date is 2026/06/30.",
+      effectiveRules(cfg),
+    )
+    expect(masked).toBe("Today's date is 2026-06-30.")
+    expect(restore.size).toBe(0)
+    expect(hits['normalize-date']).toBe(1)
+  })
+
   it('rejects a custom rule with a bad regex or a built-in id collision', () => {
     expect(compileCustomRule({ id: 'x', label: 'x', pattern: '([', fake: 'F' })).toBeNull()
     expect(

@@ -39,6 +39,14 @@ export type NormalizedBlock =
   | { type: 'image'; source: unknown }
   | { type: 'unknown'; raw: unknown }
 
+export type GuardEdit = {
+  ruleId: string
+  path: string
+  role?: string
+  before: string
+  after: string
+}
+
 /** How a captured model_call was produced by the routing orchestrator.
  *  Absent on a plain passthrough call. */
 export type Orchestration = {
@@ -107,6 +115,7 @@ export type ModelCallPayload = {
    *  Optional because older captured packets don't carry it. */
   providerId?: string
   orchestration?: Orchestration
+  guardEdits?: GuardEdit[]
 }
 
 export type NetworkPayload = {

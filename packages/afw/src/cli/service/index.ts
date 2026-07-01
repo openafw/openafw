@@ -72,8 +72,8 @@ function computeDaemonArgs(): string[] {
   const resolvedEntry = safeRealpath(entry)
   const isTs = resolvedEntry.endsWith('.ts')
   return isTs
-    ? [node, '--experimental-strip-types', resolvedEntry, 'daemon']
-    : [node, resolvedEntry, 'daemon']
+    ? [node, '--experimental-strip-types', resolvedEntry, 'daemon', 'run']
+    : [node, resolvedEntry, 'daemon', 'run']
 }
 
 function safeRealpath(p: string): string {

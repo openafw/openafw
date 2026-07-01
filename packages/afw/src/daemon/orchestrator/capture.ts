@@ -227,6 +227,7 @@ function buildPayload(
     error: af.error,
     ...(af.errorHeaders ? { errorHeaders: af.errorHeaders } : {}),
     orchestration,
+    ...(result.guardEdits?.length ? { guardEdits: result.guardEdits } : {}),
   }
 }
 

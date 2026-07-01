@@ -230,12 +230,21 @@ type OpenAIToolCall = {
   function?: { name?: string; arguments?: unknown }
 }
 
+type GuardEdit = {
+  ruleId: string
+  path: string
+  role?: string
+  before: string
+  after: string
+}
+
 type FlatMessage = {
   role: string
   content: unknown
   name?: string
   tool_call_id?: string
   tool_calls?: OpenAIToolCall[]
+  guardEdits?: GuardEdit[]
 }
 
 const PREVIEW_CHARS = 800
@@ -291,7 +300,10 @@ function MessageCard({
   onToggle: () => void
 }) {
   const role = message.role || 'unknown'
-  const content = flattenContent(message.content)
+  const edits = message.guardEdits ?? []
+  const rawContent = flattenContent(message.content)
+  const focusedEdits = edits.map(focusGuardEdit)
+  const content = applyGuardEditsToText(rawContent, focusedEdits)
 
   // why: tool-role results are often JSON-stringified objects. If we can
   // parse to an object, render as structured key/value rows (same shape
@@ -299,7 +311,8 @@ function MessageCard({
   const structuredResult = role === 'tool' ? parseArgsObject(content) : null
   // System prompts and Claude-Code-style <system-reminder> user messages
   // get a multi-section card rendering instead of one big text blob.
-  const structuredPrompt = !structuredResult ? getStructuredContent(role, content) : null
+  const structuredPrompt =
+    !structuredResult && focusedEdits.length === 0 ? getStructuredContent(role, content) : null
   const display =
     structuredResult || structuredPrompt ? '' : role === 'tool' ? tryPrettyJson(content) : content
   const isLong = display.length > PREVIEW_CHARS
@@ -350,7 +363,13 @@ function MessageCard({
           <StructuredPrompt content={structuredPrompt} />
         </div>
       ) : display ? (
-        <pre className="msg-card-body">{shown}</pre>
+        <pre className="msg-card-body">
+          {focusedEdits.length > 0 ? (
+            <HighlightedText text={shown} edits={focusedEdits} />
+          ) : (
+            shown
+          )}
+        </pre>
       ) : null}
       {Array.isArray(message.tool_calls) && message.tool_calls.length > 0 ? (
         <div className="msg-card-toolcalls">
@@ -363,8 +382,126 @@ function MessageCard({
           ))}
         </div>
       ) : null}
+      {focusedEdits.length ? <GuardEdits edits={focusedEdits} /> : null}
     </div>
   )
+}
+
+function HighlightedText({ text, edits }: { text: string; edits: GuardEdit[] }) {
+  const highlights = edits
+    .map((edit) => edit.after)
+    .filter((s, index, arr) => s && arr.indexOf(s) === index)
+    .sort((a, b) => b.length - a.length)
+  if (highlights.length === 0) return <>{text}</>
+
+  const parts: Array<{ text: string; mark: boolean }> = []
+  let index = 0
+  while (index < text.length) {
+    const hit = highlights
+      .map((h) => ({ h, at: text.indexOf(h, index) }))
+      .filter((x) => x.at >= 0)
+      .sort((a, b) => a.at - b.at || b.h.length - a.h.length)[0]
+    if (!hit) {
+      parts.push({ text: text.slice(index), mark: false })
+      break
+    }
+    if (hit.at > index) parts.push({ text: text.slice(index, hit.at), mark: false })
+    parts.push({ text: hit.h, mark: true })
+    index = hit.at + hit.h.length
+  }
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.mark ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: text fragments are positional
+          <mark className="msg-guard-highlight" key={i}>
+            {part.text}
+          </mark>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: text fragments are positional
+          <span key={i}>{part.text}</span>
+        ),
+      )}
+    </>
+  )
+}
+
+function GuardEdits({ edits }: { edits: GuardEdit[] }) {
+  return (
+    <div className="msg-card-edits">
+      <div className="msg-card-edits-title">Guard edits</div>
+      {edits.map((edit, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: edits are immutable captured metadata
+        <div className="msg-edit" key={`${edit.ruleId}-${edit.path}-${index}`}>
+          <div className="msg-edit-meta">
+            <code>{edit.ruleId}</code>
+            <span>{edit.path}</span>
+          </div>
+          <div className="msg-edit-grid">
+            <div className="msg-edit-label">Before</div>
+            <pre className="msg-edit-text msg-edit-before">{edit.before}</pre>
+            <div className="msg-edit-label">After</div>
+            <pre className="msg-edit-text msg-edit-after">{edit.after}</pre>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function applyGuardEditsToText(text: string, edits: GuardEdit[]): string {
+  let out = text
+  for (const edit of edits) {
+    if (!edit.before || edit.before === edit.after) continue
+    if (out.includes(edit.before)) {
+      out = out.split(edit.before).join(edit.after)
+      continue
+    }
+    const focused = focusGuardEdit(edit)
+    if (focused.before && out.includes(focused.before)) {
+      out = out.split(focused.before).join(focused.after)
+    }
+  }
+  return out
+}
+
+function focusGuardEdit(edit: GuardEdit): GuardEdit {
+  if (edit.before.length < 500 && edit.after.length < 500) return edit
+  const fragment = changedFragment(edit.before, edit.after)
+  return { ...edit, before: fragment.before, after: fragment.after }
+}
+
+function changedFragment(before: string, after: string): { before: string; after: string } {
+  if (before === after) return { before, after }
+  let start = 0
+  const maxStart = Math.min(before.length, after.length)
+  while (start < maxStart && before[start] === after[start]) start++
+
+  let beforeEnd = before.length
+  let afterEnd = after.length
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd--
+    afterEnd--
+  }
+
+  const left = expandFragmentLeft(before, start)
+  return {
+    before: before.slice(left, expandFragmentRight(before, beforeEnd)),
+    after: after.slice(left, expandFragmentRight(after, afterEnd)),
+  }
+}
+
+function expandFragmentLeft(text: string, index: number): number {
+  let i = index
+  while (i > 0 && !/\s/.test(text[i - 1])) i--
+  return i
+}
+
+function expandFragmentRight(text: string, index: number): number {
+  let i = index
+  while (i < text.length && !/\s/.test(text[i])) i++
+  return i
 }
 
 function ToolCallNested({ call }: { call: OpenAIToolCall }) {
@@ -569,6 +706,7 @@ function buildFlatMessages(actions: ActionSummary[]): FlatMessage[] {
   const payload = (last.payload ?? {}) as {
     messages?: unknown
     response?: unknown
+    guardEdits?: unknown
   }
   const baseRaw = Array.isArray(payload.messages) ? (payload.messages as unknown[]) : []
   const base: FlatMessage[] = []
@@ -585,7 +723,46 @@ function buildFlatMessages(actions: ActionSummary[]): FlatMessage[] {
     }
   }
 
+  attachGuardEdits(base, readGuardEdits(payload.guardEdits))
   return base
+}
+
+function readGuardEdits(value: unknown): GuardEdit[] {
+  if (!Array.isArray(value)) return []
+  const edits: GuardEdit[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const e = item as Record<string, unknown>
+    if (
+      typeof e.ruleId !== 'string' ||
+      typeof e.path !== 'string' ||
+      typeof e.before !== 'string' ||
+      typeof e.after !== 'string'
+    ) {
+      continue
+    }
+    edits.push({
+      ruleId: e.ruleId,
+      path: e.path,
+      ...(typeof e.role === 'string' ? { role: e.role } : {}),
+      before: e.before,
+      after: e.after,
+    })
+  }
+  return edits
+}
+
+function attachGuardEdits(messages: FlatMessage[], edits: GuardEdit[]): void {
+  for (const edit of edits) {
+    const candidates = messages.filter((m) => !edit.role || m.role === edit.role)
+    const target =
+      candidates.find((m) => {
+        const content = flattenContent(m.content)
+        return content.includes(edit.after) || content.includes(edit.before)
+      }) ?? candidates[0]
+    if (!target) continue
+    target.guardEdits = [...(target.guardEdits ?? []), edit]
+  }
 }
 
 /**

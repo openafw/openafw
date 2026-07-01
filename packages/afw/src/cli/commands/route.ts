@@ -78,7 +78,7 @@ async function apiFetch<T>(method: string, path: string, body?: unknown): Promis
       signal: AbortSignal.timeout(5000),
     })
   } catch {
-    throw new Error('cannot reach the afw daemon — start it with `afw daemon`')
+    throw new Error('cannot reach the afw daemon — start it with `afw daemon start`')
   }
   const text = await res.text()
   let json: unknown = {}

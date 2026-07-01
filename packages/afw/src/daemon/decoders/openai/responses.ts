@@ -160,6 +160,7 @@ export const openaiResponsesDecoder: Decoder = {
       error: errorMsg,
       ...(input.resStatus >= 400 ? { errorHeaders: headersToObject(input.resHeaders) } : {}),
       ...(input.orchestration ? { orchestration: input.orchestration } : {}),
+      ...(input.guardEdits?.length ? { guardEdits: input.guardEdits } : {}),
     }
 
     const threadTitle = deriveThreadTitle(messages)

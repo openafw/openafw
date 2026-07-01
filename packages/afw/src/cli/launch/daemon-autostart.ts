@@ -32,13 +32,14 @@ function daemonStdio(): ['ignore', number, number] | 'ignore' {
 }
 
 /** Start the daemon if it isn't already answering /health, and wait for it to
- *  come up. Re-execs this same CLI (`<node> [execArgv] <cli> daemon`) detached
- *  so it survives the launcher process. Throws if it never becomes healthy. */
+ *  come up. Re-execs this same CLI (`<node> [execArgv] <cli> daemon run`)
+ *  detached so it survives the launcher process. Throws if it never becomes
+ *  healthy. */
 export async function ensureDaemonRunning(opts: { quiet?: boolean } = {}): Promise<void> {
   if (await daemonHealthy()) return
 
   if (!opts.quiet) logger.print('starting afw daemon…')
-  const child = spawn(process.argv[0]!, [...process.execArgv, process.argv[1]!, 'daemon'], {
+  const child = spawn(process.argv[0]!, [...process.execArgv, process.argv[1]!, 'daemon', 'run'], {
     detached: true,
     stdio: daemonStdio(),
   })
@@ -50,5 +51,5 @@ export async function ensureDaemonRunning(opts: { quiet?: boolean } = {}): Promi
     await sleep(250)
     if (await daemonHealthy()) return
   }
-  throw new Error('afw daemon did not come up — try `afw daemon` in another terminal')
+  throw new Error('afw daemon did not come up — try `afw daemon start`')
 }

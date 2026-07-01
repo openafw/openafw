@@ -8,13 +8,57 @@ import {
   setMaskingRule,
   upsertMaskingCustom,
 } from '../api'
-import type { MaskingProvider, MaskingRule } from '../types'
+import type { MaskingProvider, MaskingRule, MaskingScope } from '../types'
 
 const slug = (s: string) =>
   s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
+
+type MaskingForm = {
+  label: string
+  pattern: string
+  fake: string
+  scopeRole: MaskingScope['role']
+  scopeMessage: MaskingScope['message']
+}
+
+const blankForm = (): MaskingForm => ({
+  label: '',
+  pattern: '',
+  fake: '',
+  scopeRole: 'any',
+  scopeMessage: 'all',
+})
+
+function parseRegexInput(input: string): { pattern: string; flags?: string } {
+  const trimmed = input.trim()
+  if (!trimmed.startsWith('/')) return { pattern: input }
+
+  let slash = -1
+  for (let i = trimmed.length - 1; i > 0; i--) {
+    if (trimmed[i] !== '/') continue
+    let escapes = 0
+    for (let j = i - 1; j >= 0 && trimmed[j] === '\\'; j--) escapes++
+    if (escapes % 2 === 0) {
+      slash = i
+      break
+    }
+  }
+  if (slash <= 0) return { pattern: input }
+
+  const flags = trimmed.slice(slash + 1)
+  if (!/^[A-Za-z]*$/.test(flags)) return { pattern: input }
+  return {
+    pattern: trimmed.slice(1, slash),
+    ...(flags ? { flags } : {}),
+  }
+}
+
+function scopeMessageLabel(message: MaskingScope['message']): string {
+  return message === 'first' ? 'first message for role' : 'all messages'
+}
 
 // The credential-masking control panel on the Guard page. Masking is opt-in and
 // configured per provider (registry provider id): pick a provider, then turn on
@@ -31,7 +75,7 @@ export function MaskingPanel() {
   const [busy, setBusy] = useState<string | null>(null)
   const [fakeDraft, setFakeDraft] = useState<Record<string, string>>({})
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ label: '', pattern: '', fake: '', group: '' })
+  const [form, setForm] = useState<MaskingForm>(blankForm)
 
   const apply = (p: { rules: MaskingRule[]; providers: MaskingProvider[] }) => {
     setRules(p.rules)
@@ -92,15 +136,22 @@ export function MaskingPanel() {
       setError('Custom credential needs a name, a pattern, and a fake value.')
       return
     }
+    const parsedPattern = parseRegexInput(form.pattern)
     const rule: CustomMaskingInput = {
       id,
       label: form.label,
-      pattern: form.pattern,
+      pattern: parsedPattern.pattern,
+      ...(parsedPattern.flags ? { flags: parsedPattern.flags } : {}),
       fake: form.fake,
-      ...(form.group.trim() ? { group: Number(form.group) } : {}),
+      ...(form.scopeRole !== 'any' || form.scopeMessage !== 'all'
+        ? { scope: { role: form.scopeRole, message: form.scopeMessage } }
+        : {}),
     }
-    void run('__custom', () => upsertMaskingCustom(rule)).then(() => {
-      setForm({ label: '', pattern: '', fake: '', group: '' })
+    void run('__custom', async () => {
+      const created = await upsertMaskingCustom(rule)
+      return current ? setMaskingRule(current.id, id, true) : created
+    }).then(() => {
+      setForm(blankForm())
       setAdding(false)
     })
   }
@@ -194,21 +245,38 @@ export function MaskingPanel() {
                       {rule.custom && <span className="mask-badge">custom</span>}
                     </td>
                     <td className="mask-desc">
-                      {rule.custom ? (
-                        <code className="mask-pat">/{rule.pattern}/</code>
-                      ) : (
-                        rule.description
-                      )}
+                      <code className="mask-pat">{rule.pattern}</code>
+                      {rule.description ? (
+                        <span className="mask-desc-text">{rule.description}</span>
+                      ) : null}
+                      {rule.scope ? (
+                        <span className="mask-desc-text">
+                          scope: {rule.scope.role} / {scopeMessageLabel(rule.scope.message)}
+                        </span>
+                      ) : null}
                     </td>
                     <td>
-                      <input
-                        className="mask-fake-input"
-                        value={draft}
-                        spellCheck={false}
-                        onChange={(e) => setFakeDraft((d) => ({ ...d, [rule.id]: e.target.value }))}
-                        onBlur={() => saveFake(rule)}
-                        onKeyDown={(e) => e.key === 'Enter' && saveFake(rule)}
-                      />
+                      <div className="mask-replacement-edit">
+                        <input
+                          className="mask-fake-input"
+                          value={draft}
+                          spellCheck={false}
+                          onChange={(e) =>
+                            setFakeDraft((d) => ({ ...d, [rule.id]: e.target.value }))
+                          }
+                          onBlur={() => saveFake(rule)}
+                          onKeyDown={(e) => e.key === 'Enter' && saveFake(rule)}
+                        />
+                        <button
+                          type="button"
+                          className="btn-small"
+                          disabled={busy != null || draft === rule.fake}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => saveFake(rule)}
+                        >
+                          Save
+                        </button>
+                      </div>
                     </td>
                     <td>
                       {rule.custom && (
@@ -244,17 +312,38 @@ export function MaskingPanel() {
                 onChange={(e) => setForm({ ...form, pattern: e.target.value })}
               />
               <input
-                placeholder="Fake value to substitute"
+                placeholder="Replacement (supports $1, $<name>)"
                 value={form.fake}
                 spellCheck={false}
                 onChange={(e) => setForm({ ...form, fake: e.target.value })}
               />
-              <input
-                className="mask-group-input"
-                placeholder="group #"
-                value={form.group}
-                onChange={(e) => setForm({ ...form, group: e.target.value })}
-              />
+              <select
+                value={form.scopeRole}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    scopeRole: e.target.value as MaskingScope['role'],
+                  })
+                }
+              >
+                <option value="any">any role</option>
+                <option value="system">system</option>
+                <option value="developer">developer</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+              <select
+                value={form.scopeMessage}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    scopeMessage: e.target.value as MaskingScope['message'],
+                  })
+                }
+              >
+                <option value="all">all messages</option>
+                <option value="first">first message for role</option>
+              </select>
               <button
                 type="button"
                 className="btn-small btn-primary"

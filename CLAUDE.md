@@ -71,7 +71,7 @@ command-tampering / supply-chain checks are roadmap.
 | Main binary | `afw` |
 | MCP stdio wrapper bin | `afw-tap` |
 | MCP tools server bin | `afw-tools` |
-| Daemon subcommand | `afw daemon` |
+| Daemon subcommand | `afw daemon start` / `stop` / `restart` |
 | Config dir | `~/.afw/` |
 | Trace dir | `~/.afw/wire/traces/` |
 | Backups dir | `~/.afw/backups/` |
